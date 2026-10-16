@@ -82,15 +82,25 @@ class SomersaultBehavior:
         self.temperature = max(36.0, self.temperature - 0.5 * dt)
         # monitors: testFailed is reset once the fault condition is gone,
         # and a condition which is still present after a clear is stored again
-        if not self._overheated and self.temperature > self.HOT_LIMIT:
+        if not self._overheated and self.too_hot:
             self._overheated = True
-            self._store_fault("acrobat_overheated",
-                              f"temperature {self.temperature:.0f} °C > {self.HOT_LIMIT} °C limit")
-        elif self._overheated and self.temperature <= self.HOT_LIMIT:
+            self._store_fault(
+                "acrobat_overheated",
+                f"temperature {self.sensor_temperature} °C > {self.HOT_LIMIT} °C limit")
+        elif self._overheated and not self.too_hot:
             self._overheated = False
             self._heal("acrobat_overheated")
         if self.dizziness < self.DIZZY_LIMIT:
             self._heal("flip_aborted_dizzy")
+
+    @property
+    def sensor_temperature(self) -> int:
+        """The temperature as reported by the ECU's sensor (whole °C)."""
+        return int(self.temperature)
+
+    @property
+    def too_hot(self) -> bool:
+        return self.sensor_temperature > self.HOT_LIMIT
 
     def recover(self) -> None:
         """Let the acrobat rest: reset the physical state but keep the
@@ -117,7 +127,7 @@ class SomersaultBehavior:
                 "status": FAILED,
                 "occurrences": 0,
                 "snapshot": {
-                    "temperature": int(round(min(255.0, self.temperature))),
+                    "temperature": min(255, self.sensor_temperature),
                     "dizziness": int(round(min(100.0, self.dizziness * 100 / 255))),
                     "total_flips": min(0xFFFF, self.total_flips),
                     "timestamp": min(0xFFFF, int(self._seconds())),
@@ -197,7 +207,7 @@ class SomersaultBehavior:
         params = msg.param_dict
         name = service.short_name
 
-        if self.temperature > self.HOT_LIMIT and name not in self.HOT_ALLOWED:
+        if self.too_hot and name not in self.HOT_ALLOWED:
             gnr = self.variant.global_negative_responses.too_hot
             return bytes(gnr.encode(temperature=int(self.temperature)))
 
@@ -271,11 +281,11 @@ class SomersaultBehavior:
             self.dizziness += 14 if direction == "forward" else 20
             self.temperature += 2.5 if not self.fire_ring else 4.0
             self.happiness = max(0.0, self.happiness - 3)
-            if self.temperature > self.HOT_LIMIT and not self._overheated:
+            if self.too_hot and not self._overheated:
                 self._overheated = True
                 self._store_fault(
                     "acrobat_overheated",
-                    f"temperature {self.temperature:.0f} °C > {self.HOT_LIMIT} °C limit")
+                    f"temperature {self.sensor_temperature} °C > {self.HOT_LIMIT} °C limit")
         if stumbled:
             return self._failed_flips(service, raw_req, 2, done, direction,
                                       f"stumbled after {done} flips")

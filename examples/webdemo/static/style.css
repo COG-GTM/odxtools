@@ -156,6 +156,8 @@ svg text{font-family:var(--sans)}
 .fm-timeline{position:relative;height:96px;margin:10px 8px 4px}
 .fm-axis{position:absolute;left:0;right:0;top:44px;height:1px;background:var(--text)}
 .fm-marks,.fm-ticks{position:absolute;inset:0}
+.fm-ticks{pointer-events:none;z-index:0}.fm-marks{z-index:1}
+#tab-faults .tag.real,#tab-faults .pill.on{border-color:#000;color:#000;background:#fff}
 .fm-tick{position:absolute;top:56px;font:11px var(--mono);color:var(--muted);transform:translateX(-50%)}
 .fm-tick:before{content:"";position:absolute;left:50%;top:-12px;height:6px;width:1px;background:var(--muted)}
 .fm-now{position:absolute;top:30px;height:28px;width:1px;background:var(--acc);transition:left .25s linear}

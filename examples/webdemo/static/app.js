@@ -676,7 +676,7 @@ async function fmSnapshot(code) {
     else {
       const sn = r.params.snapshot || {}, lim = S.fm.ecu?.limits || {temperature: 65, dizziness: 180};
       const dizzyLim = Math.round(lim.dizziness / 255 * 100);
-      const g = (label, v, max, l, unit) => `<div class="gauge"><div class="lab"><span>${label}</span><span class="mono">${esc(v)}${unit}</span></div><div class="bar"><div class="fill" style="width:0%;background:${v >= l ? "#d92121" : v > l * .85 ? "#e09400" : "#000"}" data-w="${Math.min(100, v / max * 100)}"></div><div class="lim" style="left:${l / max * 100}%" title="limit ${l}${unit}"></div></div></div>`;
+      const g = (label, v, max, l, unit) => `<div class="gauge"><div class="lab"><span>${label}</span><span class="mono">${esc(v)}${unit}</span></div><div class="bar"><div class="fill" style="width:0%;background:${v > l ? "#d92121" : "#000"}" data-w="${Math.min(100, v / max * 100)}"></div><div class="lim" style="left:${l / max * 100}%" title="limit ${l}${unit}"></div></div></div>`;
       d.innerHTML = `<div class="hd"><h3>Snapshot record 0x${esc(Number(r.params.record_number).toString(16).padStart(2, "0"))} · ${esc(fmHex(r.params.dtc?.trouble_code))} ${esc(r.params.dtc?.text || "")}</h3><button class="close">Close</button></div>
         <div class="muted small" style="margin:0">Frozen by the ECU when the fault was first stored · decoded by odxtools from the snapshot_record structure</div>
         <div class="fm-gauges">${g("Temperature", sn.temperature, 100, lim.temperature, " °C")}${g("Dizziness", sn.dizziness, 100, dizzyLim, " %")}</div>
