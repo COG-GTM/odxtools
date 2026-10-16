@@ -43,6 +43,7 @@ from odxtools.diaglayers.hierarchyelement import HierarchyElement  # noqa: E402
 from odxtools.diagservice import DiagService  # noqa: E402
 from odxtools.isotp_state_machine import IsoTpStateMachine  # noqa: E402
 from odxtools.message import Message  # noqa: E402
+from odxtools.parameters.codedconstparameter import CodedConstParameter  # noqa: E402
 from odxtools.odxtypes import DataType  # noqa: E402
 from odxtools.parameters.parameter import Parameter  # noqa: E402
 from odxtools.response import Response, ResponseType  # noqa: E402
@@ -510,12 +511,15 @@ def decode_pdu(dl: DiagLayer, pdu: bytes, req: bytes | None) -> list[dict[str, A
     if not msgs and req:
         # responses which may be sent for any request
         for gnr in getattr(dl, "global_negative_responses", []):
-            # the decoder does not verify CODED-CONSTs, so match them first
-            if not pdu.startswith(bytes(gnr.coded_const_prefix())):
-                continue
             try:
                 param_dict = gnr.decode(pdu)
             except Exception:
+                continue
+            # the decoder does not verify CODED-CONSTs (which may be
+            # bit-packed), so compare the decoded values
+            if any(
+                    isinstance(p, CodedConstParameter) and
+                    param_dict.get(p.short_name) != p.coded_value for p in gnr.parameters):
                 continue
             msgs = [
                 Message(
