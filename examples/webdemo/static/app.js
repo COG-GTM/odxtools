@@ -286,6 +286,7 @@ $("#liveReset").onclick = async () => {
   let st; try { st = await api(`/api/live/reset?session=${S.live.session}`, {method: "POST"}); } catch { poll(); return; }
   if (!S.live || st.session !== S.live.session) return;
   S.gen++; S.after = Math.max(S.after, st.seq); S.live.charts = null; S.lastTrans = null; poll();
+  document.dispatchEvent(new CustomEvent("live-reset", {detail: st}));
 };
 
 async function connectLive() {

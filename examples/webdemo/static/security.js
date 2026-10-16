@@ -8,7 +8,7 @@
   const CHART = "security_chart", PROTECTED = "headstand";
   const SHOWN = new Set(["security_request_seed", "security_send_key", PROTECTED, "session_stop"]);
   const MASK = 0x5A5A5A5A, ROT = 3, RING = 2 * Math.PI * 28;
-  const SA = {layer: null, precond: [], st: null, seed: null, key: null, wrong: false, phase: null, busy: false, chartKey: "", label: "", demoDb: null};
+  const SA = {layer: null, precond: [], st: null, seed: null, key: null, wrong: false, phase: null, busy: false, computing: null, chartKey: "", label: "", demoDb: null};
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const hx = b => b.toString(16).toUpperCase().padStart(2, "0");
   const toBytes = h => (h.match(/../g) || []).map(x => parseInt(x, 16));
@@ -48,7 +48,7 @@
     $("#pAlgo").classList.add("filled");
     return k.key;
   }
-  function clearPipeline() { SA.seed = SA.key = null; SA.wrong = false; setSeed(null); setAlgo(null); setKey(null); }
+  function clearPipeline() { SA.seed = SA.key = SA.computing = null; SA.wrong = false; setSeed(null); setAlgo(null); setKey(null); }
 
   // ---------------------------------------------------------------- exchanges
   function nrcInfo(resp) {
@@ -80,7 +80,7 @@
     const resp = t.response, pos = resp?.kind === "positive";
     if (t.service === "security_request_seed" && pos) {
       const seed = toBytes(resp.hex.slice(4, 12));
-      SA.seed = seed.some(b => b) ? seed : null; SA.key = null; SA.wrong = false;
+      SA.seed = seed.some(b => b) ? seed : null; SA.key = SA.computing = null; SA.wrong = false;
       setSeed(seed, SA.seed ? "random, fresh for every request" : "all zero: the ECU is already unlocked (ISO 14229-1)");
       setAlgo(null); setKey(null);
     } else if (t.service === "security_send_key" && resp) {
@@ -129,8 +129,8 @@
       : `<span class="pill off">Not connected</span> Connect to <b>${esc(SA.layer || "an ECU variant")}</b>; the Live ECU tab shares this session.`;
     $("#saConnect").textContent = st ? "Reconnect" : "Connect";
     $("#saSeed").disabled = SA.busy; $("#saWrong").disabled = SA.busy; $("#saTry").disabled = SA.busy; $("#saStop").disabled = SA.busy;
-    $("#saCompute").disabled = SA.busy || !SA.seed;
-    $("#saSend").disabled = SA.busy || !SA.key || SA.wrong || !SA.seed;
+    $("#saCompute").disabled = SA.busy || !!SA.computing || !SA.seed;
+    $("#saSend").disabled = SA.busy || !!SA.computing || !SA.key || SA.wrong || !SA.seed;
 
     const need = SA.precond.map(r => r.split(".").pop());
     const allowed = !need.length || need.includes(chartState);
@@ -179,8 +179,17 @@
   $("#saConnect").onclick = () => { if (!SA.layer) return; $("#liveLayer").value = SA.layer; updateLiveChartOptions(); connectLive(); };
   $("#saOpenDemo").onclick = () => { if (SA.demoDb) { $("#dbSelect").value = SA.demoDb; openDb(SA.demoDb); } };
   $("#saSeed").onclick = () => act(() => send({service: "security_request_seed"}));
-  $("#saCompute").onclick = () => { if (!SA.seed) return; SA.key = setAlgo(SA.seed); SA.wrong = false; SA.busy = true; render();
-    setTimeout(() => { setKey(SA.key, "computed by the tester"); SA.busy = false; render(); }, 1150); };
+  $("#saCompute").onclick = () => {
+    if (!SA.seed || SA.busy || SA.computing) return;
+    const seed = SA.seed, key = setAlgo(seed), token = SA.computing = {};
+    SA.key = key; SA.wrong = false; render();
+    setTimeout(() => {
+      if (SA.computing !== token) return;
+      SA.computing = null;
+      if (SA.seed === seed && SA.key === key) setKey(key, "computed by the tester");
+      render();
+    }, 1150);
+  };
   $("#saSend").onclick = () => SA.key && sendKey(SA.key, false);
   $("#saWrong").onclick = () => {
     const key = SA.seed ? demoKey(SA.seed).key : [0, 0, 0, 0];
@@ -215,6 +224,10 @@
     SA.st = e.detail;
     if (!e.detail || e.detail.layer === SA.layer) { clearPipeline(); emptyTimeline(); $("#saProtLast").textContent = "Not tried yet."; }
     render();
+  });
+  // Reset ECU drops the pending seed on the ECU side, so drop it here, too
+  document.addEventListener("live-reset", e => {
+    if (e.detail?.layer === SA.layer) { clearPipeline(); render(); }
   });
   document.addEventListener("live-status", e => {
     const {st, fresh} = e.detail; SA.st = st;
