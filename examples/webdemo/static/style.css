@@ -241,4 +241,4 @@ svg text{font-family:var(--sans)}
 @media (max-width:1400px){.fmgrid{grid-template-columns:1fr}.fm-tl{grid-template-columns:200px 1fr}.fm-tl-legend{margin-left:200px}}
 @media (prefers-reduced-motion:reduce){.fm *,.fm *:before,.ribbon{animation:none!important;transition:none!important}}
 .fm-tl .axis span.end{transform:translateX(-100%)}
-@media (max-width:1400px){header{padding:0 24px}.dbbar{gap:8px}#loadInfo{display:none}.brand{gap:12px}}
+@media (max-width:1400px){header{padding:0 24px}.dbbar{gap:8px}#loadInfo{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brand{gap:12px}}

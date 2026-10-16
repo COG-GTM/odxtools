@@ -381,6 +381,8 @@ def _coerce(p: Parameter, value: Any) -> Any:
     if isinstance(dop, DataObjectProperty):
         ptype = dop.physical_type.base_data_type
     sval = str(value).strip()
+    if isinstance(dop, DtcDop) and isinstance(value, int):
+        return value
     if isinstance(dop, DtcDop):
         # numeric trouble code (e.g. 0x010001) or DTC short name
         if re.fullmatch(r"0[xX][0-9a-fA-F]+|[0-9a-fA-F]+", sval):
