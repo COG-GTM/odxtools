@@ -39,8 +39,11 @@ from odxtools.compumethods.compucategory import CompuCategory  # noqa: E402
 from odxtools.database import Database  # noqa: E402
 from odxtools.dataobjectproperty import DataObjectProperty  # noqa: E402
 from odxtools.diaglayers.diaglayer import DiagLayer  # noqa: E402
+from odxtools.diagnostictroublecode import DiagnosticTroubleCode  # noqa: E402
 from odxtools.diaglayers.hierarchyelement import HierarchyElement  # noqa: E402
 from odxtools.diagservice import DiagService  # noqa: E402
+from odxtools.dtcdop import DtcDop  # noqa: E402
+from odxtools.endofpdufield import EndOfPduField  # noqa: E402
 from odxtools.isotp_state_machine import IsoTpStateMachine  # noqa: E402
 from odxtools.message import Message  # noqa: E402
 from odxtools.parameters.codedconstparameter import CodedConstParameter  # noqa: E402
@@ -49,6 +52,7 @@ from odxtools.odxtypes import DataType  # noqa: E402
 from odxtools.parameters.parameter import Parameter  # noqa: E402
 from odxtools.response import Response, ResponseType  # noqa: E402
 from odxtools.statemachine import StateMachine  # noqa: E402
+from odxtools.structure import Structure  # noqa: E402
 from virtual_ecu import CanNetwork, SomersaultBehavior  # noqa: E402
 
 warnings.simplefilter("ignore")
@@ -58,6 +62,14 @@ EXAMPLES = HERE.parent
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "odx-workbench-uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+#: bundled PDX files which extend the original somersault ODX for this demo
+DEMO_EXTENSIONS = {
+    "somersault_dtc.pdx": {
+        "generator": "examples/mksomersaultdtcpdx.py",
+        "adds": "DTC-DOP, DTC status and snapshot structures, ReadDTCInformation 0x19, "
+                "ClearDiagnosticInformation 0x14",
+    }
+}
 
 app = FastAPI(title="ODX Diagnostic Workbench")
 
@@ -104,6 +116,14 @@ _RICH = re.compile(r"\[/?[a-z_ #0-9]+\]")
 def _plain(x: Any) -> Any:
     if isinstance(x, (bytes, bytearray)):
         return "0x" + bytes(x).hex()
+    if isinstance(x, DiagnosticTroubleCode):
+        return {
+            "trouble_code": x.trouble_code,
+            "display_trouble_code": x.display_trouble_code,
+            "text": _plain(str(x.text)) if x.text is not None else None,
+            "short_name": x.short_name,
+            "level": x.level,
+        }
     if isinstance(x, dict):
         return {k: _plain(v) for k, v in x.items()}
     if isinstance(x, (list, tuple)):
@@ -329,13 +349,20 @@ def db_summary(name: str) -> dict[str, Any]:
                 } for m in rev.modifications],
             })
     return {
-        "name": name,
-        "load_time_ms": round(getattr(db, "_load_time_ms", 0.0), 1),
+        "name":
+            name,
+        "load_time_ms":
+            round(getattr(db, "_load_time_ms", 0.0), 1),
         "containers": [c.short_name for c in db.diag_layer_containers],
         "comparam_subsets": [c.short_name for c in db.comparam_subsets],
         "layers": [layer_summary(dl) for dl in db.diag_layers],
-        "revisions": revisions,
-        "auxiliary_files": sorted(db.auxiliary_files.keys()),
+        "revisions":
+            revisions,
+        "auxiliary_files":
+            sorted(db.auxiliary_files.keys()),
+        "demo_extension":
+            DEMO_EXTENSIONS.get(name)
+            if _pdx_files().get(name, Path()).parent == EXAMPLES else None,
     }
 
 
@@ -366,7 +393,7 @@ def _coerce(p: Parameter, value: Any) -> Any:
         return value
     dop = getattr(p, "dop", None)
     ptype = None
-    if isinstance(dop, DataObjectProperty):
+    if isinstance(dop, DataObjectProperty | DtcDop):
         ptype = dop.physical_type.base_data_type
     sval = str(value).strip()
     if ptype in (DataType.A_INT32, DataType.A_UINT32):
@@ -401,6 +428,33 @@ def byte_spans(obj: Any, pdu: bytes) -> list[dict[str, Any]]:
     return spans
 
 
+def deep_spans(obj: Any, data: bytes, offset: int = 0, prefix: str = "") -> list[dict[str, Any]]:
+    """Like `byte_spans()`, but descends into byte-aligned structures
+    and end-of-PDU fields (e.g. the DTC records of a 0x19 response)."""
+    out: list[dict[str, Any]] = []
+    for sp in byte_spans(obj, data):
+        name, start, length = prefix + sp["param"], offset + sp["start"], sp["length"]
+        dop = getattr(obj.parameters[sp["param"]], "dop", None)
+        sub = data[sp["start"]:sp["start"] + length]
+        if isinstance(dop, EndOfPduField) and dop.structure is not None:
+            struct = dop.structure
+            size = struct.byte_size or (struct.get_static_bit_length() or 0) // 8
+            if size:
+                for i in range(len(sub) // size):
+                    out += deep_spans(dop.structure, sub[i * size:(i + 1) * size], start + i * size,
+                                      f"{name}[{i}].")
+                continue
+        elif isinstance(dop, Structure) and sub:
+            inner = deep_spans(dop, sub, start, name + ".")
+            starts = [x["start"] for x in inner]
+            # bit fields share a byte: show the structure as a whole
+            if inner and len(set(starts)) == len(starts):
+                out += inner
+                continue
+        out.append({"param": name, "start": start, "length": length})
+    return out
+
+
 def describe_message(msg: Any) -> dict[str, Any]:
     obj = msg.coding_object
     kind = "request"
@@ -417,7 +471,7 @@ def describe_message(msg: Any) -> dict[str, Any]:
         "kind": kind,
         "hex": pdu.hex(),
         "params": _plain(msg.param_dict),
-        "spans": byte_spans(obj, pdu),
+        "spans": deep_spans(obj, pdu),
     }
 
 
@@ -503,7 +557,21 @@ def _hex(s: str) -> bytes:
         raise HTTPException(400, f"invalid hex: {e}") from e
 
 
+def _nrc_info(pdu: bytes) -> dict[str, Any] | None:
+    if len(pdu) < 3 or pdu[0] != uds.NegativeResponseId:
+        return None
+    try:
+        name: str | None = uds.NegativeResponseCodes(pdu[2]).name
+    except ValueError:
+        name = None
+    return {"code": pdu[2], "name": name}
+
+
 def decode_pdu(dl: DiagLayer, pdu: bytes, req: bytes | None) -> list[dict[str, Any]]:
+    return [{**m, "nrc": _nrc_info(pdu)} for m in _decode_pdu(dl, pdu, req)]
+
+
+def _decode_pdu(dl: DiagLayer, pdu: bytes, req: bytes | None) -> list[dict[str, Any]]:
     try:
         msgs = dl.decode_response(pdu, req) if req else dl.decode(pdu)
     except Exception:
@@ -779,6 +847,18 @@ def live_reset(session: int | None = None) -> dict[str, Any]:
         live.behavior.reset()
         for fsm in live.fsms.values():
             fsm.active_state = fsm.state_chart.start_state
+        return live.status(10**12)
+
+
+@app.post("/api/live/recover")
+def live_recover(session: int | None = None) -> dict[str, Any]:
+    """Modeled shortcut: let the acrobat rest without clearing the
+    fault memory. No UDS traffic is involved."""
+    with _live_lock:
+        live = _require_live()
+        if session is not None and session != live.session_id:
+            raise HTTPException(409, "live session was replaced by another client")
+        live.behavior.recover()
         return live.status(10**12)
 
 

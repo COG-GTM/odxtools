@@ -55,8 +55,13 @@ async function openDb(name) {
   const def = ecus[ecus.length - 1] || layers[layers.length - 1];
   $("#svcLayer").value = def.name; $("#decLayer").value = def.name;
   const lazy = ecus.find(l => l.state_charts.length); if (lazy) $("#liveLayer").value = lazy.name;
+  if (S.summary.demo_extension) {
+    const best = [...ecus].sort((a, b) => fmTriggerCount(b) - fmTriggerCount(a))[0];
+    if (best) $("#liveLayer").value = best.name;
+  }
   updateLiveChartOptions();
   selectLayer(def.name);
+  fmOnDb();
 }
 
 // ---------------------------------------------------------------- overview
@@ -185,13 +190,16 @@ function encodeNow() {
   }, 120);
 }
 
+// repeated records ("dtc_records[1].dtc") share the colour of their parameter
+const spanKey = p => p.replace(/\[\d+\]/g, "[]");
+const spanLabel = p => { const m = p.match(/\[(\d+)\]\.([^.]+)$/); return m ? `${m[2]} #${+m[1] + 1}` : p.split(".").pop(); };
 function bytesHtml(msg) {
   const bytes = msg.hex.match(/../g) || [];
-  const colors = {}; (msg.spans || []).forEach((s, i) => colors[s.param] = PALETTE[i % PALETTE.length]);
+  const colors = {}; (msg.spans || []).forEach(s => { const k = spanKey(s.param); if (!(k in colors)) colors[k] = PALETTE[Object.keys(colors).length % PALETTE.length]; });
   const owner = bytes.map((_, i) => (msg.spans || []).find(s => i >= s.start && i < s.start + s.length));
   return `<div class="bytes">${bytes.map((b, i) => {
-    const o = owner[i], c = o ? colors[o.param] : "#9a9a9a";
-    return `<div class="byte" style="background:${c}" title="byte ${i}${o ? " · " + esc(o.param) : ""}">${b.toUpperCase()}<small>${o && o.start === i ? esc(o.param) : "&nbsp;"}</small></div>`;
+    const o = owner[i], c = o ? colors[spanKey(o.param)] : "#9a9a9a";
+    return `<div class="byte" style="background:${c};--i:${i}" title="byte ${i}${o ? " · " + esc(o.param) : ""}">${esc(b.toUpperCase())}<small>${o && o.start === i ? esc(spanLabel(o.param)) : "&nbsp;"}</small></div>`;
   }).join("")}</div>`;
 }
 function paramsKv(params) {
@@ -268,7 +276,7 @@ function updateLiveChartOptions() {
   $("#liveSvc").value = l.services.find(s => s.name === "session_start") ? "session_start" : l.services[0]?.name;
   loadLiveSvcForm();
 }
-$("#liveLayer").onchange = () => { updateLiveChartOptions(); connectLive(); };
+$("#liveLayer").onchange = () => { updateLiveChartOptions(); fmSyncLayer(); connectLive(); };
 $("#liveChart").onchange = async () => { if (!$("#liveChart").value) return; await api("/api/live/chart", {method: "POST", body: {chart: $("#liveChart").value}}); drawChart(); };
 $("#liveSvc").onchange = loadLiveSvcForm;
 async function loadLiveSvcForm() {
@@ -283,7 +291,7 @@ $("#liveReset").onclick = async () => {
   S.gen = (S.gen || 0) + 1;
   let st; try { st = await api(`/api/live/reset?session=${S.live.session}`, {method: "POST"}); } catch { poll(); return; }
   if (!S.live || st.session !== S.live.session) return;
-  S.gen++; S.after = Math.max(S.after, st.seq); S.live.charts = null; S.lastTrans = null; poll();
+  S.gen++; S.after = Math.max(S.after, st.seq); S.live.charts = null; S.lastTrans = null; fmOnSession(S.live); poll();
 };
 
 async function connectLive() {
@@ -304,6 +312,7 @@ function adoptSession(st) {
   $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
   $("#liveStart").textContent = "Reconnect"; $("#liveReset").disabled = false;
   drawChart();
+  fmOnSession(st);
 }
 
 async function sendLive(body) {
@@ -326,6 +335,7 @@ async function poll() {
     $("#liveStart").textContent = "Connect"; $("#liveReset").disabled = true;
     $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = ""; $("#gauges").innerHTML = ""; $("#frameRate").textContent = "";
     drawChart();
+    fmOnSession(null);
     return;
   }
   const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;
@@ -336,6 +346,7 @@ async function poll() {
   }
   const all = [...st.frames, ...st.transactions]; if (all.length) S.after = Math.max(S.after, ...all.map(x => x.seq));
   renderGauges(st.ecu);
+  fmOnPoll(st.ecu);
   const chartsChanged = JSON.stringify(st.charts) !== JSON.stringify(S.live?.charts);
   if (chartsChanged) S.live = {...S.live, ...st};
   if (chartsChanged || S.lastTrans !== prevTrans) drawChart();
@@ -442,9 +453,270 @@ $("#liveScenario").onclick = async () => {
   } finally { btn.disabled = false; }
 };
 
+
+// ---------------------------------------------------------------- fault memory
+// DTC codes, texts and status bits are taken from the odxtools decode of
+// the 0x19 responses; only the ISO 14229-1 bit abbreviations live here.
+const ISO_BITS = {
+  test_failed: ["TF", "testFailed"], test_failed_this_operation_cycle: ["TFTOC", "testFailedThisOperationCycle"],
+  pending_dtc: ["PDTC", "pendingDTC"], confirmed_dtc: ["CDTC", "confirmedDTC"],
+  test_not_completed_since_last_clear: ["TNCSLC", "testNotCompletedSinceLastClear"], test_failed_since_last_clear: ["TFSLC", "testFailedSinceLastClear"],
+  test_not_completed_this_operation_cycle: ["TNCTOC", "testNotCompletedThisOperationCycle"], warning_indicator_requested: ["WIR", "warningIndicatorRequested"]};
+const FM_STATUS_MASK = "0xFF";  // same as the ECU's DTCStatusAvailabilityMask
+const FM_TRIGGERS = [
+  {key: "overheat", label: "Overheat", sub: "single forward flips until the ECU answers too_hot", needs: ["do_forward_flips"]},
+  {key: "dizzy", label: "Flip while dizzy", sub: "ten backward flips; the 10th is rejected for dizziness", needs: ["do_backward_flips"]},
+  {key: "fire", label: "Fire-ring flip", sub: "fire ring on, then a flip that fails its soberness check", needs: ["set_operation_params", "do_forward_flips"]}];
+S.fm = {read: false, records: [], ecu: null, sel: null, busy: false, events: 0, gen: 0};
+const fmHex = c => "0x" + Number(c).toString(16).toUpperCase().padStart(6, "0");
+const fmLayer = () => liveLayerSummary();
+const fmHas = n => !!fmLayer()?.services.some(s => s.name === n);
+const fmSupported = () => fmHas("read_dtc_by_status_mask");
+function fmTriggerCount(l) { return FM_TRIGGERS.filter(t => t.needs.every(n => l.services.some(s => s.name === n))).length; }
+function fmSyncLayer() {
+  $("#fmLayer").innerHTML = $("#liveLayer").innerHTML; $("#fmLayer").value = $("#liveLayer").value;
+  fmRenderMenu(); fmRenderSupport();
+}
+$("#fmLayer").onchange = () => { $("#liveLayer").value = $("#fmLayer").value; $("#liveLayer").onchange(); };
+
+function fmOnDb() {
+  const ext = S.summary.demo_extension;
+  $("#fmRibbon").hidden = !ext;
+  if (ext) $("#fmRibbonText").innerHTML = `${esc(S.db)} is generated by <code>${esc(ext.generator)}</code> and adds ${esc(ext.adds)} to the original somersault ODX. The bundled somersault.pdx is unchanged.`;
+  fmSyncLayer(); fmOnSession(null);
+}
+function fmOnSession(st) {
+  S.fm.gen++; S.fm.read = false; S.fm.records = []; S.fm.sel = null; S.fm.events = 0;
+  $("#fmCards").innerHTML = ""; $("#fmDrawer").hidden = true; $("#fmDrawer").innerHTML = "";
+  $("#fmTx").innerHTML = `<div class="fm-note muted">Read, snapshot and clear requests appear here once their CAN frames have arrived.</div>`;
+  $("#fmTimeline .fm-marks").innerHTML = ""; $("#fmTimeline .fm-ticks").innerHTML = "";
+  $("#fmConn").innerHTML = st ? `<span class="pill on">Connected</span> <span class="muted">${esc(st.layer)} · tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code></span>`
+    : `<span class="pill off">Not connected</span> <span class="muted">any action connects to the selected ECU variant</span>`;
+  fmRenderCards(); fmRenderTimeline(st?.ecu || null);
+}
+function fmRenderSupport() {
+  const ok = fmSupported();
+  $("#fmBody").hidden = !ok; $("#fmUnsupported").hidden = ok;
+  for (const id of ["#fmRead", "#fmClear", "#fmProvokeBtn"]) $(id).disabled = !ok;
+  if (!ok) {
+    const alt = [...$("#dbSelect").options].map(o => o.value).find(n => n.includes("dtc"));
+    $("#fmUnsupported").innerHTML = `<h3>No fault memory in this database</h3><div class="fm-lede" style="margin:0 auto 18px">${esc(S.db)} / ${esc($("#liveLayer").value)} defines no DTC-DOP and no ReadDTCInformation service.</div>${alt ? `<button class="btn" id="fmUseDtc">Open ${esc(alt)}</button>` : ""}`;
+    const b = $("#fmUseDtc"); if (b) b.onclick = () => { $("#dbSelect").value = alt; openDb(alt); };
+  }
+}
+function fmRenderMenu() {
+  $("#fmProvoke").innerHTML = FM_TRIGGERS.map(t => {
+    const missing = t.needs.filter(n => !fmHas(n));
+    return `<button role="menuitem" data-k="${esc(t.key)}" ${missing.length ? "disabled" : ""}>${esc(t.label)}<small>${missing.length ? `not possible: ${esc(missing.join(", "))} is NOT-INHERITED by ${esc($("#liveLayer").value)}` : esc(t.sub)}</small></button>`;
+  }).join("");
+  $$("#fmProvoke button").forEach(b => b.onclick = () => { fmMenu(false); fmProvoke(b.dataset.k); });
+}
+function fmMenu(open) { $("#fmProvoke").hidden = !open; $("#fmProvokeBtn").setAttribute("aria-expanded", String(open)); }
+$("#fmProvokeBtn").onclick = e => { e.stopPropagation(); fmMenu($("#fmProvoke").hidden); };
+document.addEventListener("click", e => { if (!e.target.closest(".fm-menu")) fmMenu(false); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") fmMenu(false); });
+
+function fmOnPoll(ecu) {
+  S.fm.ecu = ecu;
+  fmRenderTimeline(ecu);
+  // the occurrence counter is ECU-internal (not part of 0x19 02)
+  for (const el of $$("#fmCards .fm-card")) {
+    const e = ecu.fault_memory.find(f => f.trouble_code === +el.dataset.code);
+    const o = $(".occ b", el); if (e && o && o.textContent !== String(e.occurrences)) o.textContent = e.occurrences;
+  }
+}
+
+function fmRenderTimeline(ecu) {
+  const tl = $("#fmTimeline"), marks = $(".fm-marks", tl), ticks = $(".fm-ticks", tl);
+  const events = ecu?.fault_events || [];
+  if (events.length < S.fm.events) marks.innerHTML = "";
+  S.fm.events = events.length;
+  const span = Math.max(30, Math.ceil(((ecu?.uptime_s || 0) + 5) / 15) * 15);
+  const pos = t => `${Math.min(100, t / span * 100)}%`;
+  const els = $$(".fm-mark", marks);
+  events.forEach((ev, i) => {
+    let m = els[i];
+    if (!m) {
+      m = document.createElement("div");
+      m.className = "fm-mark " + ev.kind;
+      m.innerHTML = ev.kind === "cleared" ? `<div class="tip"><b>Fault memory cleared</b>0x14 ClearDiagnosticInformation at t = ${esc(ev.t.toFixed(1))} s</div>`
+        : `<span class="code">${esc(fmHex(ev.trouble_code))}</span><div class="tip"><b>${esc(fmHex(ev.trouble_code))} · ${esc(ev.text)}</b>${esc(ev.kind === "stored" ? "Stored" : "Updated, occurrence " + ev.occurrences)} at t = ${esc(ev.t.toFixed(1))} s<br>Trigger: ${esc(ev.trigger)}</div>`;
+      m.setAttribute("aria-label", ev.kind === "cleared" ? "fault memory cleared" : `${fmHex(ev.trouble_code)} ${ev.text}: ${ev.trigger}`);
+      marks.appendChild(m);
+    }
+    m.style.left = pos(ev.t);
+  });
+  // keep the codes of markers which are close together readable
+  let last = -1e9; $$(".fm-mark:not(.cleared) .code", marks).forEach(c => { const x = parseFloat(c.parentElement.style.left); c.style.visibility = x - last < 4 ? "hidden" : ""; if (c.style.visibility === "") last = x; });
+  let now = $(".fm-now", marks); if (!now) { now = document.createElement("div"); now.className = "fm-now"; now.title = "now"; marks.prepend(now); }
+  now.style.left = pos(ecu?.uptime_s || 0);
+  const tickHtml = Array.from({length: 7}, (_, i) => `<div class="fm-tick" style="left:${i / 6 * 100}%">${Math.round(i * span / 6)} s</div>`).join("");
+  if (ticks.dataset.span !== String(span)) { ticks.innerHTML = tickHtml; ticks.dataset.span = span; }
+  let empty = $(".fm-empty-line", tl);
+  if (!events.length) { if (!empty) { empty = document.createElement("div"); empty.className = "fm-empty-line"; tl.appendChild(empty); } empty.textContent = ecu ? "No fault events yet. Use Provoke fault to drive the ECU into a fault condition." : "Not connected."; }
+  else if (empty) empty.remove();
+}
+
+function fmBitsHtml(status) {
+  const entries = Object.entries(status || {});
+  const byte = entries.reduce((a, [, v], i) => a | ((v ? 1 : 0) << i), 0);
+  return `<div class="fm-bits">${entries.map(([k, v], i) => {
+    const [ab, name] = ISO_BITS[k] || [k, k];
+    return `<span class="fm-bit${v ? " on" : ""}" data-bit="${esc(k)}" title="bit ${i} · ${esc(name)} (${esc(k)}) · ${v ? "set" : "not set"}">${esc(ab)}</span>`;
+  }).join("")}<span class="sb">status 0x${byte.toString(16).toUpperCase().padStart(2, "0")}</span></div>`;
+}
+function fmCardHtml(r) {
+  const d = r.dtc || {}, occ = S.fm.ecu?.fault_memory.find(f => f.trouble_code === d.trouble_code)?.occurrences;
+  return `<div class="top"><div class="code">${esc(fmHex(d.trouble_code))}<small>${esc(d.short_name || "")}</small></div>
+    <div class="occ" title="occurrence counter of the modeled ECU (not transmitted by 0x19 02)">occurrences<b>${esc(occ ?? "–")}</b></div></div>
+    <div class="text">${esc(d.text || "(DTC not defined in the DTC-DOP)")}</div>${fmBitsHtml(r.status)}`;
+}
+function fmRenderCards(nrc) {
+  const box = $("#fmCards");
+  $$(".fm-empty,.fm-nrc", box).forEach(e => e.remove());
+  const keep = new Set(S.fm.records.map(r => String(r.dtc?.trouble_code)));
+  for (const el of $$(".fm-card:not(.out)", box)) {
+    if (keep.has(el.dataset.code)) continue;
+    el.classList.add("out");
+    setTimeout(() => el.remove(), window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 260);
+  }
+  for (const r of S.fm.records) {
+    const code = String(r.dtc?.trouble_code);
+    let el = $(`.fm-card[data-code="${CSS.escape(code)}"]:not(.out)`, box);
+    if (!el) {
+      el = document.createElement("div"); el.className = "fm-card"; el.dataset.code = code; el.tabIndex = 0;
+      el.innerHTML = fmCardHtml(r);
+      el.onclick = () => fmSnapshot(+el.dataset.code);
+      el.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fmSnapshot(+el.dataset.code); } };
+      box.appendChild(el);
+    } else {
+      // cross-fade changed status bits in place
+      for (const [k, v] of Object.entries(r.status || {})) { const b = $(`.fm-bit[data-bit="${CSS.escape(k)}"]`, el); if (b) { b.classList.toggle("on", !!v); b.title = b.title.replace(/(set|not set)$/, v ? "set" : "not set"); } }
+      const byte = Object.values(r.status || {}).reduce((a, v, i) => a | ((v ? 1 : 0) << i), 0);
+      const sb = $(".sb", el); if (sb) sb.textContent = `status 0x${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+    }
+    el.classList.toggle("sel", S.fm.sel === +code);
+  }
+  if (nrc) box.insertAdjacentHTML("afterbegin", nrc);
+  if (!S.fm.records.length && !nrc) {
+    box.insertAdjacentHTML("beforeend", S.fm.read
+      ? `<div class="fm-empty"><div class="ill"></div><b>No stored faults</b><span>The ECU reported no DTC matching status mask ${esc(FM_STATUS_MASK)}.</span></div>`
+      : `<div class="fm-empty"><div class="ill"></div><b>Fault memory not read yet</b><span>Press Read DTCs to send 19 02 ${esc(FM_STATUS_MASK.slice(2))} to the ECU.</span></div>`);
+  }
+  if (S.fm.sel !== null && !keep.has(String(S.fm.sel))) fmCloseDrawer();
+}
+
+function fmNrcHtml(tx) {
+  const r = tx?.response;
+  if (!tx) return `<div class="fm-nrc"><span class="nm">Request failed</span><div>The server rejected the request, see the transaction log on Live Virtual ECU.</div></div>`;
+  if (!r) return `<div class="fm-nrc"><span class="nm">${tx.blocked ? "Blocked by the ODX state chart" : "No response"}</span><div>${tx.blocked ? `No PRE-CONDITION-STATE-REF of ${esc(tx.service)} applies in state ${esc(tx.state_before)}.` : "The ECU did not answer within the timeout."}</div></div>`;
+  const code = r.nrc?.code, name = r.nrc?.name || r.coding_object;
+  return `<div class="fm-nrc"><span class="nm">${esc(name)}</span><span class="hx">${code != null ? "NRC 0x" + esc(code.toString(16).toUpperCase().padStart(2, "0")) : ""}</span>
+    <div>${esc(r.kind.replace("_", " "))} response <code>${esc(spaced(r.hex))}</code>${r.coding_object && r.coding_object !== name ? ` · ODX ${esc(r.coding_object)}` : ""}</div></div>`;
+}
+function fmPair(tx, label) {
+  const box = $("#fmTx"); $(".fm-note", box)?.remove();
+  const el = document.createElement("div");
+  const r = tx?.response, neg = !r || r.kind !== "positive";
+  el.className = "fm-pair" + (neg ? " neg" : "");
+  el.innerHTML = !tx ? fmNrcHtml(tx) : `<div class="hd"><b>${esc(label)}</b><span class="muted small">${esc(tx.service || "")} · ${esc(tx.frames ?? 0)} CAN frames · ${esc(tx.latency_ms)} ms</span></div>
+    <div class="rw req"><span>REQ</span>${bytesHtml(tx.request)}</div>
+    <div class="rw resp"><span>${r ? esc(r.kind === "positive" ? "POS" : "NEG") : "–"}</span>${r ? bytesHtml(r) : `<div class="muted small">${tx.blocked ? "not sent: blocked by the state chart" : "no response"}</div>`}</div>
+    ${neg ? fmNrcHtml(tx) : ""}`;
+  box.prepend(el);
+  while (box.children.length > 30) box.lastChild.remove();
+}
+async function fmSend(body, label) {
+  const gen = S.fm.gen;
+  if (!S.live) { await connectLive(); }
+  const tx = await sendLive(body);
+  if (label && (gen === S.fm.gen || S.fm.gen === gen + 1)) fmPair(tx, label);
+  return tx;
+}
+async function fmBusy(fn) {
+  if (S.fm.busy) return; S.fm.busy = true;
+  for (const id of ["#fmRead", "#fmClear", "#fmProvokeBtn"]) $(id).disabled = true;
+  try { await fn(); } finally { S.fm.busy = false; fmRenderSupport(); $("#fmProgress").textContent = ""; }
+}
+
+async function fmRead() {
+  const tx = await fmSend({service: "read_dtc_by_status_mask", params: {status_mask: FM_STATUS_MASK}}, "Read DTCs · 0x19 02");
+  if (tx?.response?.kind === "positive") {
+    S.fm.read = true; S.fm.records = tx.response.params.dtc_records || []; fmRenderCards();
+  } else fmRenderCards(fmNrcHtml(tx));
+}
+$("#fmRead").onclick = () => fmBusy(fmRead);
+$("#fmClear").onclick = () => fmBusy(async () => {
+  const tx = await fmSend({service: "clear_dtcs"}, "Clear DTCs · 0x14");
+  if (tx?.response?.kind === "positive") { S.fm.read = true; S.fm.records = []; fmRenderCards(); }
+  else fmRenderCards(fmNrcHtml(tx));
+});
+
+function fmCloseDrawer() { S.fm.sel = null; $("#fmDrawer").hidden = true; $$("#fmCards .fm-card").forEach(c => c.classList.remove("sel")); }
+async function fmSnapshot(code) {
+  if (S.fm.busy) return;
+  S.fm.sel = code; $$("#fmCards .fm-card").forEach(c => c.classList.toggle("sel", +c.dataset.code === code));
+  await fmBusy(async () => {
+    const tx = await fmSend({service: "read_dtc_snapshot", params: {dtc: String(code), record_number: "1"}}, `Snapshot ${fmHex(code)} · 0x19 04`);
+    if (S.fm.sel !== code) return;
+    const d = $("#fmDrawer"); d.hidden = false;
+    const r = tx?.response;
+    if (r?.kind !== "positive") { d.innerHTML = `<div class="hd"><h3>Snapshot record 0x01 · ${esc(fmHex(code))}</h3><button class="close">Close</button></div>${fmNrcHtml(tx)}`; }
+    else {
+      const sn = r.params.snapshot || {}, lim = S.fm.ecu?.limits || {temperature: 65, dizziness: 180};
+      const dizzyLim = Math.round(lim.dizziness / 255 * 100);
+      const g = (label, v, max, l, unit) => `<div class="gauge"><div class="lab"><span>${label}</span><span class="mono">${esc(v)}${unit}</span></div><div class="bar"><div class="fill" style="width:0%;background:${v >= l ? "#d92121" : v > l * .85 ? "#e09400" : "#000"}" data-w="${Math.min(100, v / max * 100)}"></div><div class="lim" style="left:${l / max * 100}%" title="limit ${l}${unit}"></div></div></div>`;
+      d.innerHTML = `<div class="hd"><h3>Snapshot record 0x${esc(Number(r.params.record_number).toString(16).padStart(2, "0"))} · ${esc(fmHex(r.params.dtc?.trouble_code))} ${esc(r.params.dtc?.text || "")}</h3><button class="close">Close</button></div>
+        <div class="muted small" style="margin:0">Frozen by the ECU when the fault was first stored · decoded by odxtools from the snapshot_record structure</div>
+        <div class="fm-gauges">${g("Temperature", sn.temperature, 100, lim.temperature, " °C")}${g("Dizziness", sn.dizziness, 100, dizzyLim, " %")}</div>
+        <div class="fm-facts"><span><b>${esc(sn.total_flips)}</b>total flips</span><span><b>${esc(sn.timestamp)} s</b>since connect</span>${fmBitsHtml(r.params.status)}</div>
+        ${bytesHtml(r)}`;
+      requestAnimationFrame(() => requestAnimationFrame(() => $$(".fill[data-w]", d).forEach(f => f.style.width = f.dataset.w + "%")));
+    }
+    $(".close", d).onclick = fmCloseDrawer;
+  });
+}
+
+async function fmRecover() {
+  if (!S.live) await connectLive();
+  try { await api(`/api/live/recover?session=${S.live.session}`, {method: "POST"}); } catch (e) { addTxError(e.message); }
+  await poll();
+}
+async function fmEnsureSession() {
+  if (S.fm.ecu?.session_active) return;
+  await sendLive({service: "session_start", params: {bribe: "1"}});
+}
+async function fmProvoke(key) {
+  await fmBusy(async () => {
+    const t = FM_TRIGGERS.find(x => x.key === key), prog = $("#fmProgress");
+    prog.textContent = `Provoking "${t.label}": the acrobat rests first (modeled, no UDS) …`;
+    await fmRecover(); await fmEnsureSession();
+    const flip = (dir, sob, n) => sendLive({service: `do_${dir}_flips`, params: {[`${dir}_soberness_check`]: sob, num_flips: String(n)}});
+    if (key === "overheat") {
+      for (let i = 1; i <= 30; i++) {
+        const tx = await flip("forward", "0x12", 1);
+        prog.textContent = `Provoking "${t.label}": forward flip ${i} · ${S.fm.ecu?.temperature ?? "?"} °C`;
+        if (!tx || tx.response?.kind === "global_negative" || (tx.response && tx.response.kind !== "positive")) break;
+        await sleep(90);
+      }
+    } else if (key === "dizzy") {
+      prog.textContent = `Provoking "${t.label}": 10 backward flips …`;
+      await flip("backward", "0x12", 10);
+    } else if (key === "fire") {
+      prog.textContent = `Provoking "${t.label}": fire ring on, flip with soberness 0x42 …`;
+      await sendLive({service: "set_operation_params", params: {use_fire_ring: "true"}});
+      await sleep(250);
+      await flip("forward", "0x42", 1);
+      await sleep(250);
+      await sendLive({service: "set_operation_params", params: {use_fire_ring: "false"}});
+    }
+    await poll();
+  });
+}
+
 loadDatabases().then(() => {
   const t = location.hash.slice(1); const b = $(`#tabs button[data-tab="${t}"]`); if (b) b.click();
   if (t === "compare") $("#cmpGo").click();
   if (t === "decode") decodeNow();
-  if (t === "live") connectLive();
+  if (t === "live" || t === "faults") connectLive();
 });

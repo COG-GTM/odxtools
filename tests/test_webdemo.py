@@ -176,6 +176,105 @@ class TestWebDemo(unittest.TestCase):
             self.server._live.close()
             self.server._live = None
 
+    def test_demo_dtc_pdx(self) -> None:
+        sys.path.insert(0, str(WEBDEMO.parent.parent))
+        import tempfile
+
+        import odxtools
+        from examples import mksomersaultdtcpdx
+        from odxtools.diagnostictroublecode import DiagnosticTroubleCode
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "somersault_dtc.pdx"
+            odxtools.write_pdx_file(str(out), mksomersaultdtcpdx.build_database())
+            db = odxtools.load_pdx_file(str(out))
+        for variant in ("somersault_lazy", "somersault_assiduous"):
+            dl = db.ecus[variant]
+            req = dl.services.read_dtc_by_status_mask.encode_request()
+            self.assertEqual(req.hex(), "1902ff")
+            self.assertEqual(dl.services.clear_dtcs.encode_request().hex(), "14ffffff")
+            self.assertEqual(
+                dl.services.read_dtc_snapshot.encode_request(dtc=0x010003).hex(), "190401000301")
+            msg = dl.decode_response(bytes.fromhex("5902ff0100020d"), req)[0]
+            dtc = msg.param_dict["dtc_records"][0]["dtc"]  # type: ignore[index]
+            self.assertIsInstance(dtc, DiagnosticTroubleCode)
+            self.assertEqual(dtc.trouble_code, 0x010002)
+            self.assertEqual(str(dtc.text), "Flip aborted – too dizzy")
+        # the bundled database is not extended
+        summary = self.client.get("/api/db/somersault.pdx").json()
+        self.assertIsNone(summary["demo_extension"])
+        names = {s["name"] for layer in summary["layers"] for s in layer["services"]}
+        self.assertNotIn("read_dtc_by_status_mask", names)
+        self.assertIsNotNone(self.client.get("/api/db/somersault_dtc.pdx").json()["demo_extension"])
+
+    def test_fault_memory(self) -> None:
+        self.client.post(
+            "/api/live/start",
+            json={
+                "db": "somersault_dtc.pdx",
+                "layer": "somersault_lazy",
+                "chart": "angry_chart"
+            })
+
+        def send(**body: Any) -> Any:
+            r = self.client.post("/api/live/send", json=body)
+            self.assertEqual(r.status_code, 200, r.text)
+            return r.json()
+
+        def read() -> list[Any]:
+            tx = send(raw="19 02 ff")
+            self.assertEqual(tx["service"], "read_dtc_by_status_mask")
+            self.assertEqual(tx["response"]["kind"], "positive")
+            self.assertEqual(tx["response"]["params"]["availability_mask"], 0xFF)
+            return tx["response"]["params"]["dtc_records"]  # type: ignore[no-any-return]
+
+        try:
+            self.assertEqual(read(), [])
+            send(service="session_start", params={"bribe": "1"})
+            for _ in range(30):
+                tx = send(
+                    service="do_forward_flips",
+                    params={
+                        "forward_soberness_check": "0x12",
+                        "num_flips": "1"
+                    })
+                if tx["response"]["kind"] != "positive":
+                    break
+            self.assertEqual(tx["response"]["kind"], "global_negative")
+
+            records = read()
+            self.assertEqual(len(records), 1)
+            dtc = records[0]["dtc"]
+            self.assertEqual(dtc["trouble_code"], 0x010001)
+            self.assertEqual(dtc["text"], "Acrobat overheated")
+            self.assertEqual(records[0]["status"]["test_failed"], 1)
+            self.assertEqual(records[0]["status"]["confirmed_dtc"], 1)
+
+            tx = send(service="read_dtc_snapshot", params={"dtc": "0x010001", "record_number": "1"})
+            self.assertEqual(tx["response"]["kind"], "positive")
+            self.assertEqual(tx["response"]["params"]["dtc"]["trouble_code"], 0x010001)
+            snapshot = tx["response"]["params"]["snapshot"]
+            self.assertGreater(snapshot["temperature"], 65)
+            self.assertGreater(snapshot["total_flips"], 0)
+            self.assertIn("snapshot.temperature", {s["param"] for s in tx["response"]["spans"]})
+
+            # no snapshot for a DTC which is not stored
+            tx = send(service="read_dtc_snapshot", params={"dtc": "0x010002", "record_number": "1"})
+            self.assertEqual(tx["response"]["nrc"]["code"], 0x31)
+
+            tx = send(service="clear_dtcs")
+            self.assertEqual(tx["request"]["hex"], "14ffffff")
+            self.assertEqual(tx["response"]["hex"], "54")
+            self.assertEqual(read(), [])
+
+            ecu = self.client.get("/api/live/poll").json()["ecu"]
+            self.assertEqual(ecu["fault_memory"], [])
+            self.assertEqual([e["kind"] for e in ecu["fault_events"]], ["stored", "cleared"])
+        finally:
+            assert self.server._live is not None
+            self.server._live.close()
+            self.server._live = None
+
 
 if __name__ == "__main__":
     unittest.main()

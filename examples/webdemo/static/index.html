@@ -28,6 +28,7 @@
   <button data-tab="overview" class="active">Overview</button>
   <button data-tab="services">Service Inspector</button>
   <button data-tab="live">Live Virtual ECU</button>
+  <button data-tab="faults">Fault Memory</button>
   <button data-tab="decode">Decoder</button>
   <button data-tab="compare">Compare</button>
 </nav>
@@ -97,6 +98,48 @@
     <div class="card">
       <h2>CAN bus trace <span id="frameRate" class="muted small"></span></h2>
       <div class="tracewrap"><table id="trace"><thead><tr><th>#</th><th>t [ms]</th><th>CAN ID</th><th>Node</th><th>ISO-TP</th><th>Data</th><th>Reassembled telegram</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-faults" class="tab">
+    <div id="fmRibbon" class="fm-ribbon" hidden><b>Demo PDX extension</b><span id="fmRibbonText"></span></div>
+    <div class="card fm-head">
+      <div class="fm-headrow">
+        <div>
+          <h2 class="fm-title">Fault Memory</h2>
+          <p class="fm-lede">Faults the virtual ECU stored as diagnostic trouble codes, read over UDS <code>0x19</code>, decoded by odxtools from the ODX DTC-DOP and cleared with <code>0x14</code>.</p>
+        </div>
+        <div class="fm-controls">
+          <label>ECU variant</label><select id="fmLayer"></select>
+          <button id="fmRead" class="btn">Read DTCs</button>
+          <button id="fmClear" class="btn ghost">Clear DTCs</button>
+          <div class="fm-menu">
+            <button id="fmProvokeBtn" class="btn accent" aria-haspopup="true" aria-expanded="false">Provoke fault <span class="caret"></span></button>
+            <div id="fmProvoke" class="fm-menu-list" role="menu" hidden></div>
+          </div>
+        </div>
+      </div>
+      <div class="fm-status"><span id="fmConn"></span><span id="fmProgress" class="muted"></span></div>
+      <div class="honesty"><span class="tag real">REAL</span> odxtools DTC-DOP decode · ODX state chart · UDS over virtual CAN / ISO-TP
+        &nbsp;&nbsp;<span class="tag model">MODELED</span> acrobat physics · fault detection algorithm · occurrence counter · event timeline</div>
+    </div>
+    <div id="fmUnsupported" class="card fm-unsupported" hidden></div>
+    <div id="fmBody">
+      <div class="card">
+        <h2>Fault timeline <span class="tag model">MODELED</span> <span class="muted small">ECU-internal event log since connect — hover a marker for its trigger</span></h2>
+        <div id="fmTimeline" class="fm-timeline"><div class="fm-axis"></div><div class="fm-marks"></div><div class="fm-ticks"></div></div>
+      </div>
+      <div class="fm-grid">
+        <div class="card">
+          <h2>Stored DTCs <span class="tag real">REAL</span> <span class="muted small">decoded from the 0x19 02 response · click a card for its snapshot</span></h2>
+          <div id="fmCards" class="fm-cards"></div>
+          <div id="fmDrawer" class="fm-drawer" hidden></div>
+        </div>
+        <div class="card">
+          <h2>UDS exchanges <span class="tag real">REAL</span> <span class="muted small">request above, response below · bytes coloured by ODX parameter</span></h2>
+          <div id="fmTx" class="fm-tx"><div class="fm-note muted">Read, snapshot and clear requests appear here once their CAN frames have arrived.</div></div>
+        </div>
+      </div>
     </div>
   </section>
 
