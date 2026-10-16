@@ -44,6 +44,7 @@ from odxtools.diagservice import DiagService  # noqa: E402
 from odxtools.isotp_state_machine import IsoTpStateMachine  # noqa: E402
 from odxtools.message import Message  # noqa: E402
 from odxtools.parameters.codedconstparameter import CodedConstParameter  # noqa: E402
+from odxtools.parameters.physicalconstantparameter import PhysicalConstantParameter  # noqa: E402
 from odxtools.odxtypes import DataType  # noqa: E402
 from odxtools.parameters.parameter import Parameter  # noqa: E402
 from odxtools.response import Response, ResponseType  # noqa: E402
@@ -515,11 +516,14 @@ def decode_pdu(dl: DiagLayer, pdu: bytes, req: bytes | None) -> list[dict[str, A
                 param_dict = gnr.decode(pdu)
             except Exception:
                 continue
-            # the decoder does not verify CODED-CONSTs (which may be
-            # bit-packed), so compare the decoded values
+            # in non-strict mode, mismatching constants (which may be
+            # bit-packed) are not rejected, so compare the decoded values
             if any(
-                    isinstance(p, CodedConstParameter) and
-                    param_dict.get(p.short_name) != p.coded_value for p in gnr.parameters):
+                    param_dict.get(p.short_name) != expected for p, expected in (
+                        (p, p.coded_value if isinstance(p, CodedConstParameter) else p
+                         .physical_constant_value)
+                        for p in gnr.parameters
+                        if isinstance(p, CodedConstParameter | PhysicalConstantParameter))):
                 continue
             msgs = [
                 Message(
