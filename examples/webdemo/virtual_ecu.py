@@ -151,6 +151,12 @@ class SomersaultBehavior:
             "fault_memory": {
                 "supported": self.fault_memory_supported,
                 "availability_mask": self.STATUS_AVAILABILITY_MASK,
+                # which DTC each modeled monitor stores
+                "monitors": {
+                    "overheat": self.dtc_codes.get(self.DTC_OVERHEATED),
+                    "dizzy": self.dtc_codes.get(self.DTC_DIZZY),
+                    "fire_ring": self.dtc_codes.get(self.DTC_FIRE_RING),
+                },
                 "since_connect": round(self._since_connect(), 2),
                 "faults": [{
                     "trouble_code": code,

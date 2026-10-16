@@ -590,8 +590,11 @@ const FM_RECIPES = [
       const setRing = v => sendLive({service: "set_operation_params", params: {use_fire_ring: String(v)}});
       // the ECU refuses set_operation_params once it is too hot, so restore the ring before the last flips
       let lit = ring && !prev;
-      const seen = (S.ecu.fault_memory?.events || []).length;
-      const stored = () => (S.ecu?.fault_memory?.events || []).slice(seen).some(ev => ev.kind === "stored");
+      // the overheat DTC's occurrence counter is monotonic, unlike the capped event log
+      const hotCode = S.ecu.fault_memory?.monitors?.overheat;
+      const occ = () => S.ecu?.fault_memory?.faults.find(f => f.trouble_code === hotCode)?.occurrences || 0;
+      const occ0 = occ();
+      const stored = () => hotCode != null && occ() > occ0;
       if (lit) await setRing(true);
       try {
         const until = Date.now() + 120000;
