@@ -272,22 +272,38 @@ $("#liveLayer").onchange = () => { updateLiveChartOptions(); connectLive(); };
 $("#liveChart").onchange = async () => { if (!$("#liveChart").value) return; await api("/api/live/chart", {method: "POST", body: {chart: $("#liveChart").value}}); drawChart(); };
 $("#liveSvc").onchange = loadLiveSvcForm;
 async function loadLiveSvcForm() {
-  const name = $("#liveSvc").value; if (!name) return;
-  const d = await api(`/api/db/${encodeURIComponent(S.db)}/layer/${$("#liveLayer").value}/service/${name}`);
+  const name = $("#liveSvc").value, db = S.db, layer = $("#liveLayer").value; if (!name) return;
+  const d = await api(`/api/db/${encodeURIComponent(db)}/layer/${layer}/service/${name}`);
+  if (db !== S.db || layer !== $("#liveLayer").value || name !== $("#liveSvc").value) return;
   buildForm($("#liveForm"), d.request, () => {});
 }
 $("#liveStart").onclick = connectLive;
-$("#liveReset").onclick = async () => { await api("/api/live/reset", {method: "POST"}); S.live.charts = null; poll(); };
+$("#liveReset").onclick = async () => {
+  if (!S.live) return;
+  S.gen = (S.gen || 0) + 1;
+  let st; try { st = await api(`/api/live/reset?session=${S.live.session}`, {method: "POST"}); } catch { poll(); return; }
+  if (!S.live || st.session !== S.live.session) return;
+  S.gen++; S.after = Math.max(S.after, st.seq); S.live.charts = null; S.lastTrans = null; poll();
+};
 
 async function connectLive() {
+  const conn = S.conn = (S.conn || 0) + 1;
+  S.gen = (S.gen || 0) + 1;
   const st = await api("/api/live/start", {method: "POST", body: {db: S.db, layer: $("#liveLayer").value, chart: $("#liveChart").value || null}});
-  S.after = 0; S.live = st; S.frameTimes = [];
-  $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
-  $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
-  $("#liveStart").textContent = "Reconnect";
-  drawChart();
+  if (conn !== S.conn) return;
+  adoptSession(st);
   if (!S.polling) S.polling = setInterval(poll, 250);
   poll();
+}
+
+// Follow the server's session when it matches the selected ECU (e.g. after overlapping reconnects or another tab).
+function adoptSession(st) {
+  S.gen = (S.gen || 0) + 1; S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
+  if (st.chart && [...$("#liveChart").options].some(o => o.value === st.chart)) $("#liveChart").value = st.chart;
+  $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
+  $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
+  $("#liveStart").textContent = "Reconnect"; $("#liveReset").disabled = false;
+  drawChart();
 }
 
 async function sendLive(body) {
@@ -300,13 +316,29 @@ $("#liveSendRaw").onclick = () => sendLive({raw: $("#liveRaw").value});
 $("#liveLong").onclick = () => { $("#liveRaw").value = "ba 12 03 " + Array.from({length: 17}, (_, i) => (0xa0 + i).toString(16)).join(" "); sendLive({raw: $("#liveRaw").value}); };
 
 async function poll() {
+  const gen = S.gen;
   let st; try { st = await api(`/api/live/poll?after=${S.after}`); } catch { return; }
-  if (!st.running) return;
-  for (const f of st.frames) addFrame(f);
-  for (const t of st.transactions) addTx(t);
+  if (gen !== S.gen || !st.running || !S.live) return;
+  if (st.session !== S.live.session) {
+    if (st.db === S.db && st.layer === $("#liveLayer").value) { adoptSession(st); return poll(); }
+    S.gen++; S.live = null; S.lastTrans = null;
+    $("#liveIds").innerHTML = `<span class="pill off">Disconnected</span> Another client replaced the live session (${esc(st.db)} / ${esc(st.layer)}). Connect or send to start a session for the selected ECU.`;
+    $("#liveStart").textContent = "Connect"; $("#liveReset").disabled = true;
+    $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = ""; $("#gauges").innerHTML = ""; $("#frameRate").textContent = "";
+    drawChart();
+    return;
+  }
+  const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;
+  for (const f of st.frames.filter(fresh)) addFrame(f);
+  for (const t of st.transactions.filter(fresh)) {
+    addTx(t);
+    if (!t.blocked && t.state_before && t.state_before !== t.state_after) S.lastTrans = {chart: t.chart, from: t.state_before, to: t.state_after, service: t.service};
+  }
   const all = [...st.frames, ...st.transactions]; if (all.length) S.after = Math.max(S.after, ...all.map(x => x.seq));
   renderGauges(st.ecu);
-  if (JSON.stringify(st.charts) !== JSON.stringify(S.live?.charts)) { S.live = {...S.live, ...st}; drawChart(); }
+  const chartsChanged = JSON.stringify(st.charts) !== JSON.stringify(S.live?.charts);
+  if (chartsChanged) S.live = {...S.live, ...st};
+  if (chartsChanged || S.lastTrans !== prevTrans) drawChart();
   S.live.chart = st.chart;
   const now = performance.now(); S.frameTimes = S.frameTimes.filter(t => now - t < 5000);
   $("#frameRate").textContent = `${st.frame_count} frames captured by passive sniffer · ${(S.frameTimes.length / 5).toFixed(1)} frames/s`;
@@ -372,7 +404,9 @@ function drawChart() {
     svg += `<g><ellipse cx="${x}" cy="${y}" rx="44" ry="22" fill="${on ? "#000" : "#fff"}" stroke="${on ? "#000" : "#bdbdbd"}" stroke-width="1.2"></ellipse>
       <text x="${x}" y="${y + 4}" font-size="11.5" text-anchor="middle" fill="${on ? "#fff" : "#333"}" font-weight="${on ? 600 : 400}">${esc(s)}</text></g>`;
   }
-  const rows = sc.transitions.map(t => `<tr${S.live && t.to === active && t.services.length ? ' class="cur"' : ""}><td>${esc(t.name)}</td><td class="mono">${esc(t.from)} &rarr; ${esc(t.to)}</td><td class="mono">${esc([...new Set(t.services)].join(", ") || "\u2013")}</td></tr>`).join("");
+  const lt = S.lastTrans?.chart === sc.name && S.lastTrans.to === active ? S.lastTrans : null;
+  const ran = lt && sc.transitions.find(t => t.from === lt.from && t.to === lt.to && (!lt.service || t.services.includes(lt.service)));
+  const rows = sc.transitions.map(t => `<tr${t === ran ? ' class="cur"' : ""}><td>${esc(t.name)}</td><td class="mono">${esc(t.from)} &rarr; ${esc(t.to)}</td><td class="mono">${esc([...new Set(t.services)].join(", ") || "\u2013")}</td></tr>`).join("");
   $("#chartSvg").innerHTML = svg + `</svg><table class="transitions"><tr><th>Transition</th><th>States</th><th>Triggered by</th></tr>${rows}</table>`;
 }
 
