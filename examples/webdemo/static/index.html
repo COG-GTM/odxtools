@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ODX Diagnostic Workbench · odxtools</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">ODX</div>
+    <div>
+      <h1>Diagnostic Workbench</h1>
+      <div class="sub">powered by <b>odxtools</b> · ISO 22901 ODX/PDX · UDS · ISO-TP</div>
+    </div>
+  </div>
+  <div class="dbbar">
+    <label>Database</label>
+    <select id="dbSelect"></select>
+    <label class="btn ghost" title="Load your own .pdx file">Upload PDX<input id="upload" type="file" accept=".pdx" hidden></label>
+    <span id="loadInfo" class="muted"></span>
+  </div>
+</header>
+<nav id="tabs">
+  <button data-tab="overview" class="active">Overview</button>
+  <button data-tab="services">Service Inspector</button>
+  <button data-tab="live">Live Virtual ECU</button>
+  <button data-tab="decode">Decoder</button>
+  <button data-tab="compare">Compare</button>
+</nav>
+<main>
+  <section id="tab-overview" class="tab active">
+    <div id="stats" class="stats"></div>
+    <div class="grid2">
+      <div class="card"><h2>Diagnostic layer inheritance</h2><div id="inherit"></div></div>
+      <div class="card"><h2>Communication parameters</h2><div id="comparams"></div><h2 style="margin-top:18px">Document revisions</h2><div id="revisions"></div></div>
+    </div>
+    <div class="card"><h2>Service availability per layer <span class="muted small">● defined here · ○ inherited · ✕ NOT-INHERITED · – absent</span></h2><div id="matrix"></div></div>
+  </section>
+
+  <section id="tab-services" class="tab">
+    <div class="split">
+      <aside class="card side">
+        <label>Layer</label><select id="svcLayer"></select>
+        <div id="svcList" class="svclist"></div>
+      </aside>
+      <div class="detail">
+        <div class="card" id="svcHeader"></div>
+        <div class="card"><h2>Request encoder <span class="muted small">odxtools <code>Request.encode()</code> — edit values, bytes update live</span></h2>
+          <div id="encForm" class="form"></div>
+          <div id="encOut"></div>
+        </div>
+        <div id="svcLayouts"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-live" class="tab">
+    <div class="card livebar">
+      <div class="row">
+        <label>ECU variant</label><select id="liveLayer"></select>
+        <label>State chart</label><select id="liveChart"></select>
+        <button id="liveStart" class="btn">Connect</button>
+        <button id="liveReset" class="btn ghost">Reset ECU</button>
+        <button id="liveScenario" class="btn accent">▶ Run demo scenario</button>
+        <span id="liveIds" class="muted"></span>
+      </div>
+      <div class="honesty"><span class="tag real">REAL</span> odxtools encode/decode · odxtools <code>StateMachine</code> · odxtools <code>IsoTpStateMachine</code> bus snooper · python-can virtual bus · can-isotp stacks
+        &nbsp;&nbsp;<span class="tag model">MODELED</span> the acrobat's behavior (dizziness / temperature rules) inside the virtual ECU</div>
+    </div>
+    <div class="livegrid">
+      <div class="card">
+        <h2>Tester</h2>
+        <label>Service</label><select id="liveSvc"></select>
+        <div id="liveForm" class="form"></div>
+        <button id="liveSend" class="btn">Send request</button>
+        <h3>Raw telegram</h3>
+        <input id="liveRaw" placeholder="hex, e.g. 31 01 ff 00">
+        <div class="row"><button id="liveSendRaw" class="btn ghost">Send raw</button>
+        <button id="liveLong" class="btn ghost" title="20-byte request → ISO-TP first/flow-control/consecutive frames">Multi-frame</button></div>
+        <h3>ECU telemetry <span class="muted small">(modeled)</span></h3>
+        <div id="gauges"></div>
+      </div>
+      <div class="card">
+        <h2>Transactions <span class="muted small">decoded by odxtools against the ECU variant</span></h2>
+        <div id="txlog" class="txlog"></div>
+      </div>
+      <div class="card">
+        <h2>State chart <span id="chartName" class="muted small"></span></h2>
+        <div id="chartSvg"></div>
+        <div class="muted small">Pre-conditions &amp; transitions are evaluated by <code>odxtools.statemachine.StateMachine</code> from the ODX STATE-CHART.</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>CAN bus trace <span id="frameRate" class="muted small"></span></h2>
+      <div class="tracewrap"><table id="trace"><thead><tr><th>#</th><th>t [ms]</th><th>CAN ID</th><th>Node</th><th>ISO-TP</th><th>Data</th><th>Reassembled telegram</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-decode" class="tab">
+    <div class="card">
+      <h2>Decode a raw UDS telegram</h2>
+      <div class="row">
+        <label>Layer</label><select id="decLayer"></select>
+      </div>
+      <div class="row"><label>Telegram</label><input id="decHex" value="62 b3 6d 0a fb 02 92"></div>
+      <div class="row"><label>Triggering request <span class="muted small">(for responses)</span></label><input id="decReq" value="22 00"></div>
+      <div class="row"><button id="decGo" class="btn">Decode</button>
+        <span class="muted small">Examples:</span>
+        <button class="chip" data-hex="ba 12 05" data-req="">ba 12 05</button>
+        <button class="chip" data-hex="fa 05 0f" data-req="ba 12 05">fa 05 0f</button>
+        <button class="chip" data-hex="7f ba 01 03" data-req="ba 12 05">7f ba 01 03</button>
+        <button class="chip" data-hex="7f fe a7 5a" data-req="ba 12 05">7f fe a7 5a</button>
+        <button class="chip" data-hex="62 b3 6d 0a fb 02 92" data-req="22 00">62 b3 6d 0a fb 02 92</button>
+      </div>
+      <div id="decOut"></div>
+    </div>
+  </section>
+
+  <section id="tab-compare" class="tab">
+    <div class="card">
+      <h2>Compare two databases <span class="muted small">odxtools <code>compare</code> DiffEngine</span></h2>
+      <div class="row"><label>Old</label><select id="cmpOld"></select><label>New</label><select id="cmpNew"></select><button id="cmpGo" class="btn">Compare</button><span id="cmpTime" class="muted"></span></div>
+    </div>
+    <div id="cmpOut"></div>
+  </section>
+</main>
+<footer>odxtools by Mercedes-Benz Tech Innovation / MBition · this UI is a demo front-end calling the library directly</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: MIT
+import sys
+import unittest
+from typing import Any
+from pathlib import Path
+
+try:
+    from fastapi.testclient import TestClient
+    import isotp  # noqa: F401
+    HAVE_DEPS = True
+except (ImportError, RuntimeError):
+    HAVE_DEPS = False
+
+WEBDEMO = Path(__file__).resolve().parent.parent / "examples" / "webdemo"
+
+
+@unittest.skipUnless(HAVE_DEPS, "webdemo dependencies are not installed")
+class TestWebDemo(unittest.TestCase):
+    server: Any
+    client: Any
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        sys.path.insert(0, str(WEBDEMO))
+        import server
+        cls.server = server
+        cls.client = TestClient(server.app)
+
+    def test_summary_and_encode(self) -> None:
+        summary = self.client.get("/api/db/somersault.pdx").json()
+        self.assertEqual([layer["name"] for layer in summary["layers"]], [
+            "somersault_protocol", "somersault_base_variant", "somersault_lazy",
+            "somersault_assiduous"
+        ])
+        r = self.client.post(
+            "/api/db/somersault.pdx/encode",
+            json={
+                "layer": "somersault_lazy",
+                "service": "do_forward_flips",
+                "params": {
+                    "forward_soberness_check": "0x12",
+                    "num_flips": "5"
+                }
+            }).json()
+        self.assertEqual(r["hex"], "ba1205")
+        self.assertEqual([s["param"] for s in r["spans"]],
+                         ["sid", "forward_soberness_check", "num_flips"])
+
+    def test_decode_response(self) -> None:
+        r = self.client.post(
+            "/api/db/somersault.pdx/decode",
+            json={
+                "layer": "somersault_assiduous",
+                "hex": "7f ba 01 03",
+                "request_hex": "ba1205"
+            }).json()
+        self.assertEqual(r[0]["coding_object"], "flips_not_done")
+        self.assertEqual(r[0]["params"]["reason"], 1)
+
+    def test_compare(self) -> None:
+        r = self.client.get("/api/compare?old=somersault.pdx&new=somersault_modified.pdx").json()
+        self.assertEqual(r["summary"]["new_layers"], 1)
+
+    def test_live_network(self) -> None:
+        self.client.post(
+            "/api/live/start",
+            json={
+                "db": "somersault.pdx",
+                "layer": "somersault_lazy",
+                "chart": "angry_chart"
+            })
+        try:
+            # without a bribe, the angry ECU's state chart forbids session_start
+            tx = self.client.post(
+                "/api/live/send", json={
+                    "service": "session_start",
+                    "params": {}
+                }).json()
+            self.assertTrue(tx["blocked"])
+
+            tx = self.client.post(
+                "/api/live/send", json={
+                    "service": "session_start",
+                    "params": {
+                        "bribe": "1"
+                    }
+                }).json()
+            self.assertFalse(tx["blocked"])
+            self.assertEqual(tx["response"]["kind"], "positive")
+            self.assertEqual(tx["state_after"], "on_street")
+
+            tx = self.client.post(
+                "/api/live/send",
+                json={
+                    "service": "do_forward_flips",
+                    "params": {
+                        "forward_soberness_check": "0x12",
+                        "num_flips": "3"
+                    }
+                }).json()
+            self.assertEqual(tx["response"]["coding_object"], "grudging_forward")
+            self.assertEqual(tx["response"]["params"]["num_flips_done"], 3)
+
+            # a 20 byte telegram requires ISO-TP segmentation
+            tx = self.client.post("/api/live/send", json={"raw": "ba1203" + "00" * 17}).json()
+            self.assertGreater(tx["frames"], 3)
+
+            tx = self.client.post("/api/live/send", json={"raw": "3101ff00"}).json()
+            self.assertEqual(tx["response"]["hex"], "7f3111")
+
+            poll = self.client.get("/api/live/poll?after=0").json()
+            kinds = {f["isotp"] for f in poll["frames"]}
+            self.assertTrue({"SF", "FF", "FC", "CF"} <= kinds)
+        finally:
+            assert self.server._live is not None
+            self.server._live.close()
+            self.server._live = None
+
+
+if __name__ == "__main__":
+    unittest.main()

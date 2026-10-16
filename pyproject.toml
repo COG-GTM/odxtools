@@ -64,8 +64,14 @@ test = [
 examples = [
      "can-isotp >= 1.9",
 ]
+webdemo = [
+     "can-isotp >= 2.0",
+     "fastapi >= 0.110",
+     "uvicorn >= 0.29",
+     "python-multipart >= 0.0.9",
+]
 all = [
-     "odxtools[browse-tool,compare-tool,test,examples]"
+     "odxtools[browse-tool,compare-tool,test,examples,webdemo]"
 ]
 
 [project.urls]
