@@ -16,6 +16,7 @@ import isotp
 
 import odxtools.uds as uds
 from odxtools.diaglayers.diaglayer import DiagLayer
+from odxtools.diagnostictroublecode import DiagnosticTroubleCode
 from odxtools.exceptions import DecodeError, EncodeError
 from odxtools.response import Response
 
@@ -31,20 +32,86 @@ class SomersaultBehavior:
     DIZZY_LIMIT = 180
     HOT_LIMIT = 65
     MAX_FLIPS_PER_REQUEST = 10
+    # ISO 14229 status bits which this ECU supports (DTCStatusAvailabilityMask)
+    STATUS_AVAILABILITY_MASK = 0xFF
+    # testFailed | pendingDTC | confirmedDTC
+    STORED_STATUS = 0x01 | 0x04 | 0x08
+    SNAPSHOT_RECORD = 0x01
+    # fault memory services which are answered even if the ECU is too hot
+    ALWAYS_ALLOWED = ("tester_present", "report_status", "session_stop", "read_dtc_by_status_mask",
+                      "read_dtc_snapshot", "clear_dtcs")
+    # ODX DTC short names of the modeled fault triggers
+    DTC_OVERHEATED = "acrobat_overheated"
+    DTC_DIZZY = "flip_aborted_dizzy"
+    DTC_FIRE_RING = "fire_ring_malfunction"
 
     def __init__(self, variant: DiagLayer) -> None:
         self.variant = variant
+        self.connected_at = time.monotonic()
+        self.dtcs: dict[str, DiagnosticTroubleCode] = {
+            dtc.short_name: dtc
+            for dop in variant.diag_data_dictionary_spec.dtc_dops
+            for dtc in dop.dtcs
+        }
         self.reset()
 
+    @property
+    def has_fault_memory(self) -> bool:
+        return bool(self.dtcs)
+
     def reset(self) -> None:
+        self.rest()
+        self.fire_ring = False
+        self.total_flips = 0
+        # trouble code -> {status, snapshot, occurrences, ...}
+        self.fault_memory: dict[int, dict[str, Any]] = {}
+        self.fault_events: list[dict[str, Any]] = []
+
+    def rest(self) -> None:
+        """Let the acrobat recover (temperature, dizziness, happiness)
+        without touching the fault memory."""
         self.session_active = False
         self.dizziness = 0.0
         self.happiness = 120.0
         self.temperature = 36.0
-        self.fire_ring = False
-        self.total_flips = 0
         self.last_flip: tuple[str, dict[str, Any]] = ("none", {})
         self._t = time.monotonic()
+
+    def _now(self) -> float:
+        return time.monotonic() - self.connected_at
+
+    def store_fault(self, dtc_name: str, trigger: str) -> None:
+        """Store (or update) a DTC together with snapshot record 0x01."""
+        dtc = self.dtcs.get(dtc_name)
+        if dtc is None:
+            return
+        now = self._now()
+        snapshot = {
+            "temperature": int(min(255, round(self.temperature))),
+            "dizziness": int(min(100, round(self.dizziness * 100 / 255))),
+            "total_flips": min(0xFFFF, self.total_flips),
+            "timestamp": min(0xFFFF, int(now)),
+        }
+        entry = self.fault_memory.get(dtc.trouble_code)
+        kind = "updated" if entry is not None else "stored"
+        if entry is None:
+            entry = self.fault_memory[dtc.trouble_code] = {"occurrences": 0, "first_seen": now}
+        entry.update(
+            status=self.STORED_STATUS,
+            snapshot=snapshot,
+            occurrences=entry["occurrences"] + 1,
+            last_seen=now,
+            trigger=trigger)
+        self.fault_events.append({
+            "t": round(now, 2),
+            "kind": kind,
+            "trouble_code": dtc.trouble_code,
+            "dtc": dtc.short_name,
+            "text": dtc.text.text if dtc.text is not None else None,
+            "trigger": trigger,
+            "occurrences": entry["occurrences"],
+        })
+        del self.fault_events[:-200]
 
     def tick(self) -> None:
         now = time.monotonic()
@@ -69,6 +136,12 @@ class SomersaultBehavior:
             "limits": {
                 "dizziness": self.DIZZY_LIMIT,
                 "temperature": self.HOT_LIMIT,
+            },
+            "fault_memory": {
+                "supported": self.has_fault_memory,
+                "stored": len(self.fault_memory),
+                "events": list(self.fault_events),
+                "uptime": round(self._now(), 2),
             },
         }
 
@@ -98,8 +171,7 @@ class SomersaultBehavior:
         params = msg.param_dict
         name = service.short_name
 
-        if self.temperature > self.HOT_LIMIT and name not in ("tester_present", "report_status",
-                                                              "session_stop"):
+        if self.temperature > self.HOT_LIMIT and name not in self.ALWAYS_ALLOWED:
             gnr = self.variant.global_negative_responses.too_hot
             return bytes(gnr.encode(temperature=int(self.temperature)))
 
@@ -145,27 +217,37 @@ class SomersaultBehavior:
 
     def _flips(self, service: Any, raw_req: bytes, params: dict[str, Any], direction: str) -> bytes:
         if not self.session_active:
-            return self._raw_nrc_flips(service, raw_req, 0, 0)
+            return self._failed_flips(service, raw_req, 0, 0, "no diagnostic session")
         soberness = int(params.get(f"{direction}_soberness_check", 0))
         n = int(params.get("num_flips", 0))
         if soberness >= self.SOBERNESS_LIMIT:
-            return self._raw_nrc_flips(service, raw_req, 0, 0)
+            return self._failed_flips(
+                service, raw_req, 0, 0,
+                f"soberness check 0x{soberness:02x} ≥ 0x{self.SOBERNESS_LIMIT:02x}")
 
         done = 0
         stumbled = False
         for _ in range(n):
             if self.dizziness >= self.DIZZY_LIMIT:
-                return self._raw_nrc_flips(service, raw_req, 1, done)
+                trigger = f"dizziness {self.dizziness:.0f} ≥ {self.DIZZY_LIMIT} limit"
+                self.store_fault(self.DTC_DIZZY, f"{direction} flip refused: {trigger}")
+                return self._failed_flips(service, raw_req, 1, done, trigger)
             if done >= self.MAX_FLIPS_PER_REQUEST:
                 stumbled = True
                 break
             done += 1
             self.total_flips += 1
             self.dizziness += 14 if direction == "forward" else 20
+            was_hot = self.temperature > self.HOT_LIMIT
             self.temperature += 2.5 if not self.fire_ring else 4.0
             self.happiness = max(0.0, self.happiness - 3)
+            if not was_hot and self.temperature > self.HOT_LIMIT:
+                self.store_fault(
+                    self.DTC_OVERHEATED, f"temperature {self.temperature:.0f} °C > "
+                    f"{self.HOT_LIMIT} °C limit after flip {self.total_flips}")
         if stumbled:
-            return self._raw_nrc_flips(service, raw_req, 2, done)
+            return self._failed_flips(service, raw_req, 2, done,
+                                      f"more than {self.MAX_FLIPS_PER_REQUEST} flips requested")
 
         sault_time = min(255, done * (3 if direction == "forward" else 5))
         if direction == "forward":
@@ -180,6 +262,12 @@ class SomersaultBehavior:
             raw_req,
             num_flips_done=done,
             grumpiness_level=min(255, int(255 - self.happiness)))
+
+    def _failed_flips(self, service: Any, raw_req: bytes, reason: int, done: int,
+                      why: str) -> bytes:
+        if self.fire_ring:
+            self.store_fault(self.DTC_FIRE_RING, f"flip through the fire ring failed: {why}")
+        return self._raw_nrc_flips(service, raw_req, reason, done)
 
     def _raw_nrc_flips(self, service: Any, raw_req: bytes, reason: int, done: int) -> bytes:
         resp = service.negative_responses.flips_not_done
@@ -216,6 +304,53 @@ class SomersaultBehavior:
             resp = service.negative_responses.fell_over
             return bytes(resp.encode(raw_req))
         self.dizziness += duration / 2
+        return self._pos(service, raw_req)
+
+    def _status_bits(self, status: int) -> dict[str, int]:
+        """Expand a status byte into the bit parameters of the ODX
+        status structure."""
+        struct = self.variant.diag_data_dictionary_spec.structures.dtc_status
+        return {p.short_name: (status >> (p.bit_position or 0)) & 1 for p in struct.parameters}
+
+    def _on_read_dtc_by_status_mask(self, service: Any, raw_req: bytes, params: dict[str,
+                                                                                     Any]) -> bytes:
+        mask = int(params.get("status_mask", 0))
+        records = [{
+            "dtc": code,
+            "status": self._status_bits(entry["status"])
+        } for code, entry in sorted(self.fault_memory.items()) if entry["status"] & mask]
+        return self._pos(
+            service,
+            raw_req,
+            status_availability_mask=self.STATUS_AVAILABILITY_MASK,
+            dtc_records=records)
+
+    def _on_read_dtc_snapshot(self, service: Any, raw_req: bytes, params: dict[str, Any]) -> bytes:
+        dtc = params.get("dtc")
+        code = getattr(dtc, "trouble_code", dtc)
+        entry = self.fault_memory.get(code) if isinstance(code, int) else None
+        if entry is None or params.get("record_number") != self.SNAPSHOT_RECORD:
+            return self._general_nrc(service, raw_req, uds.NegativeResponseCodes.RequestOutOfRange)
+        return self._pos(
+            service,
+            raw_req,
+            dtc=code,
+            status=self._status_bits(entry["status"]),
+            record_number=self.SNAPSHOT_RECORD,
+            snapshot=entry["snapshot"])
+
+    def _on_clear_dtcs(self, service: Any, raw_req: bytes, params: dict[str, Any]) -> bytes:
+        cleared = len(self.fault_memory)
+        self.fault_memory.clear()
+        self.fault_events.append({
+            "t": round(self._now(), 2),
+            "kind": "cleared",
+            "trouble_code": None,
+            "dtc": None,
+            "text": None,
+            "trigger": f"ClearDiagnosticInformation: {cleared} DTC(s) erased",
+            "occurrences": 0,
+        })
         return self._pos(service, raw_req)
 
 

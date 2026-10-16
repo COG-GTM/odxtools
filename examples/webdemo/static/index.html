@@ -28,9 +28,11 @@
   <button data-tab="overview" class="active">Overview</button>
   <button data-tab="services">Service Inspector</button>
   <button data-tab="live">Live Virtual ECU</button>
+  <button data-tab="faults">Fault Memory</button>
   <button data-tab="decode">Decoder</button>
   <button data-tab="compare">Compare</button>
 </nav>
+<div id="demoRibbon" class="ribbon" hidden><b>Demo PDX extension</b><span id="demoRibbonText"></span></div>
 <main>
   <section id="tab-overview" class="tab active">
     <div id="stats" class="stats"></div>
@@ -97,6 +99,54 @@
     <div class="card">
       <h2>CAN bus trace <span id="frameRate" class="muted small"></span></h2>
       <div class="tracewrap"><table id="trace"><thead><tr><th>#</th><th>t [ms]</th><th>CAN ID</th><th>Node</th><th>ISO-TP</th><th>Data</th><th>Reassembled telegram</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-faults" class="tab fm">
+    <div class="card fm-hero">
+      <div class="fm-head">
+        <div>
+          <h2 class="fm-title">Fault memory</h2>
+          <p class="fm-lede">Modeled faults in the virtual Somersault ECU store diagnostic trouble codes with a snapshot; the tester reads them with UDS <code>0x19</code>, odxtools decodes them through the ODX <code>DTC-DOP</code>, and <code>0x14</code> clears them, all over virtual CAN / ISO-TP.</p>
+        </div>
+        <div id="fmConn" class="fm-conn muted small"></div>
+      </div>
+      <div class="row fm-controls">
+        <label>ECU variant</label><select id="fmLayer"></select>
+        <button id="fmConnect" class="btn ghost">Connect</button>
+        <span class="fm-sep"></span>
+        <button id="fmRead" class="btn">Read DTCs</button>
+        <button id="fmClear" class="btn ghost">Clear DTCs</button>
+        <div class="fm-menu" id="fmMenu">
+          <button id="fmProvoke" class="btn accent" aria-haspopup="true" aria-expanded="false">Provoke fault &#9662;</button>
+          <div class="fm-menu-list" role="menu" id="fmMenuList"></div>
+        </div>
+        <span class="muted small" id="fmMaskInfo"></span>
+      </div>
+      <div id="fmProgress" class="fm-progress muted small"></div>
+      <div class="honesty"><span class="tag real">REAL</span> UDS 0x19 / 0x14 over python-can virtual bus + ISO-TP · odxtools encode/decode with the <code>DTC-DOP</code>, status and snapshot structures of the PDX
+        &nbsp;&nbsp;<span class="tag model">MODELED</span> fault triggers, occurrence counter and snapshot values inside the virtual ECU</div>
+    </div>
+    <div id="fmUnsupported" class="card fm-unsupported" hidden></div>
+    <div id="fmBody">
+      <div class="card">
+        <h2>Session timeline <span class="tag model">MODELED</span> <span class="muted small">every stored or updated DTC drops a marker; hover for the trigger</span></h2>
+        <div id="fmTimeline" class="fm-timeline"></div>
+      </div>
+      <div class="fmgrid">
+        <div class="card">
+          <h2>Stored DTCs <span class="tag real">REAL</span> <span class="muted small" id="fmCardsInfo">decoded by odxtools from the 0x19 02 response</span></h2>
+          <div id="fmCards" class="fm-cards"></div>
+        </div>
+        <div class="card fm-drawer" id="fmDrawer">
+          <h2>Snapshot record <span class="tag real">REAL</span> <span class="muted small">0x19 04 · record 0x01</span></h2>
+          <div id="fmSnapshot"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>UDS exchanges <span class="tag real">REAL</span> <span class="muted small">request above, response below · every byte coloured by its ODX parameter</span></h2>
+        <div id="fmExchanges" class="fm-exchanges"></div>
+      </div>
     </div>
   </section>
 
