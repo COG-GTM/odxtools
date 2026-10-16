@@ -128,3 +128,4 @@ td.mono,.mono{font-family:var(--mono)}
 .svc-title{margin:0;font:400 26px/1.2 var(--serif);color:var(--text)}
 footer{color:var(--muted);font-size:11px;text-align:center;padding:24px 40px 40px;border-top:1px solid var(--line);margin-top:8px}
 svg text{font-family:var(--sans)}
+.transitions{margin:8px 0 14px;font-size:12px}.transitions td,.transitions th{padding:5px 6px}.transitions tr.cur td{color:var(--acc-h)}
