@@ -564,11 +564,14 @@ async function fmProvoke(p) {
       if (st.rest) {
         try { await api(`/api/live/rest?session=${S.live.session}`, {method: "POST"}); } catch (e) { addTxError(e.message); }
         await poll();
-      } else await sendLive({service: st.service, params: st.params});
+      } else if (!await sendLive({service: st.service, params: st.params})) {
+        prog.innerHTML = `<span class="tag model">MODELED</span> ${esc(p.title)} stopped at <b>${esc(st.service)}</b>: the ECU request failed (see Live ECU).`;
+        return;
+      }
       await sleep(fmReduced() ? 50 : 350);
     }
     prog.innerHTML = `<span class="tag model">MODELED</span> ${esc(p.title)} done. Read DTCs to fetch the fault memory.`;
-  } finally { FM.busy = false; $$(".fm-controls button").forEach(b => b.disabled = false); }
+  } finally { FM.busy = false; $$(".fm-controls button").forEach(b => b.disabled = false); fmBuildMenu(); }
 }
 
 // ---- cards
