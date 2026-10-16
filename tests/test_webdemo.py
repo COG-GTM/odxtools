@@ -267,6 +267,16 @@ class TestWebDemo(unittest.TestCase):
             self.assertEqual(tx["response"]["kind"], "negative")
             self.assertEqual(tx["response"]["nrc"]["name"], "RequestOutOfRange")
 
+            # clearing while still too hot re-detects the active overheat
+            tx = send(service="clear_dtcs")
+            self.assertEqual(tx["response"]["hex"], "54")
+            tx = send(service="read_dtc_by_status_mask", params={"status_mask": "0xff"})
+            self.assertEqual([
+                r["dtc"]["trouble_code"] for r in tx["response"]["params"]["dtc_records"]
+            ], [0x010001])
+
+            assert self.server._live is not None
+            self.server._live.behavior.temperature = 40.0
             tx = send(service="clear_dtcs")
             self.assertEqual(tx["response"]["hex"], "54")
             tx = send(service="read_dtc_by_status_mask", params={"status_mask": "0xff"})

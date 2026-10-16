@@ -363,6 +363,12 @@ class SomersaultBehavior:
         n = len(self.faults)
         self.faults.clear()
         self._log_fault_event("cleared", None, f"{n} stored DTC(s) cleared by the tester", None)
+        # the overheat monitor still fails, so the DTC is re-detected immediately
+        if self.temperature > self.HOT_LIMIT:
+            self._store_fault(
+                self.DTC_OVERHEATED,
+                f"temperature {self.temperature:.1f} °C still > {self.HOT_LIMIT} °C limit after clear"
+            )
         return self._pos(service, raw_req)
 
 

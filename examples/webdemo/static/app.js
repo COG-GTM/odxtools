@@ -45,6 +45,7 @@ $("#upload").onchange = async e => {
 async function openDb(name) {
   S.db = name;
   S.summary = await api(`/api/db/${encodeURIComponent(name)}`);
+  if (S.live && S.live.db !== name) liveDetach(`The live session belongs to ${S.live.db}. Connect or send to start a session for ${name}.`);
   $("#loadInfo").textContent = `parsed in ${S.summary.load_time_ms} ms by odxtools.load_pdx_file()`;
   renderOverview();
   const layers = S.summary.layers;
@@ -311,6 +312,15 @@ function adoptSession(st) {
   drawChart(); fmResetView(); fmRenderAll();
 }
 
+// forget the server-side session locally; the next send starts one for the selected ECU
+function liveDetach(why) {
+  S.gen = (S.gen || 0) + 1; S.live = null; S.ecu = null; S.lastTrans = null;
+  $("#liveIds").innerHTML = `<span class="pill off">Disconnected</span> ${esc(why)}`;
+  $("#liveStart").textContent = "Connect"; $("#liveReset").disabled = true; $("#fmConn").textContent = "Disconnected";
+  $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = ""; $("#gauges").innerHTML = ""; $("#frameRate").textContent = "";
+  drawChart();
+}
+
 async function sendLive(body) {
   if (!S.live) await connectLive();
   try { const tx = await api("/api/live/send", {method: "POST", body}); await poll(); return tx; }
@@ -326,11 +336,7 @@ async function poll() {
   if (gen !== S.gen || !st.running || !S.live) return;
   if (st.session !== S.live.session) {
     if (st.db === S.db && st.layer === $("#liveLayer").value) { adoptSession(st); return poll(); }
-    S.gen++; S.live = null; S.lastTrans = null;
-    $("#liveIds").innerHTML = `<span class="pill off">Disconnected</span> Another client replaced the live session (${esc(st.db)} / ${esc(st.layer)}). Connect or send to start a session for the selected ECU.`;
-    $("#liveStart").textContent = "Connect"; $("#liveReset").disabled = true; $("#fmConn").textContent = "Disconnected";
-    $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = ""; $("#gauges").innerHTML = ""; $("#frameRate").textContent = "";
-    drawChart();
+    liveDetach(`Another client replaced the live session (${st.db} / ${st.layer}). Connect or send to start a session for the selected ECU.`);
     return;
   }
   const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;
@@ -606,7 +612,8 @@ function fmRenderTimeline() {
   const fm = S.ecu?.fault_memory, el = $("#fmTimeline");
   const dtcs = fmDtcs(), events = fm?.events || [];
   const span = Math.max(30, Math.ceil(((fm?.since_connect || 0) + 5) / 10) * 10);
-  const key = JSON.stringify([dtcs.map(d => d.trouble_code), events.length, span, S.live?.session]);
+  const last = events[events.length - 1];
+  const key = JSON.stringify([dtcs.map(d => d.trouble_code), events.length, last?.t, last?.kind, span, S.live?.session]);
   const pct = t => `${(t / span * 100).toFixed(2)}%`;
   if (key !== FM.eventsKey) {
     FM.eventsKey = key;
