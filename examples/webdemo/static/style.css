@@ -11,7 +11,7 @@ body{margin:0;background:var(--bg);color:var(--text2);font:14px/1.5 var(--sans);
 header{background:#000;color:#fff;display:flex;justify-content:space-between;align-items:center;padding:0 40px;height:72px}
 .brand{display:flex;gap:18px;align-items:center}
 .star{width:38px;height:38px;flex:none}
-.wordmark{font-family:var(--serif);font-size:21px;letter-spacing:.2px;color:#fff}
+.wordmark{white-space:nowrap;font-family:var(--serif);font-size:21px;letter-spacing:.2px;color:#fff}
 .divider{width:1px;height:28px;background:#444}
 h1{margin:0;font:400 15px/1.2 var(--sans);color:#fff;letter-spacing:.2px}
 .sub{color:#9f9f9f;font-size:12px;margin-top:2px}
@@ -176,7 +176,7 @@ svg text{font-family:var(--sans)}
 .clr:before{content:"";position:absolute;left:4px;top:0;bottom:0;border-left:1px dashed var(--acc)}
 .now{position:absolute;top:0;bottom:24px;width:1px;background:#bdbdbd;transition:left .25s linear}
 .fm-tl .axis{position:relative;height:24px}
-.fm-tl .axis span{position:absolute;top:6px;transform:translateX(-50%);font:11px var(--mono);color:var(--muted)}
+.fm-tl .axis span{position:absolute;top:6px;transform:translateX(-50%);white-space:nowrap;font:11px var(--mono);color:var(--muted)}
 .tip{position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);min-width:240px;max-width:340px;background:#000;color:#fff;font:12px/1.45 var(--sans);padding:10px 12px;opacity:0;visibility:hidden;transition:opacity .15s;pointer-events:none;z-index:30;text-align:left}
 .tip b{display:block;font-weight:600;margin-bottom:3px}.tip .muted{color:#bbb}
 .mk:hover .tip,.mk:focus .tip,.clr:hover .tip,.clr:focus .tip{opacity:1;visibility:visible}
@@ -240,3 +240,5 @@ svg text{font-family:var(--sans)}
 .fm-nrc-hd b{color:var(--bad);font-weight:600}
 @media (max-width:1400px){.fmgrid{grid-template-columns:1fr}.fm-tl{grid-template-columns:200px 1fr}.fm-tl-legend{margin-left:200px}}
 @media (prefers-reduced-motion:reduce){.fm *,.fm *:before,.ribbon{animation:none!important;transition:none!important}}
+.fm-tl .axis span.end{transform:translateX(-100%)}
+@media (max-width:1400px){header{padding:0 24px}.dbbar{gap:8px}#loadInfo{display:none}.brand{gap:12px}}

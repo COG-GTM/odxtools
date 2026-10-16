@@ -544,6 +544,7 @@ $("#fmClear").onclick = async () => {
   const els = [...$$("#fmCards .fm-card")];
   els.forEach((el, i) => { el.style.transitionDelay = `${i * 60}ms`; el.classList.add("leaving"); });
   FM.cards.clear(); FM.lastRead = null;
+  $("#fmCardsInfo").textContent = "0 DTCs · fault memory cleared (54) · read again to confirm";
   $("#fmDrawer").classList.remove("open"); $("#fmSnapshot").innerHTML = fmDrawerIdle();
   setTimeout(() => {
     if (FM.cards.size) return;
@@ -603,9 +604,9 @@ function fmRenderCards(params) {
   fmUpdateOccurrences();
 }
 function fmUpdateOccurrences() {
-  const ev = FM.ecu?.fault_memory?.events || [];
+  const occ = FM.ecu?.fault_memory?.occurrences || {};
   for (const [code, el] of FM.cards) {
-    let n = 0; for (const e of ev) { if (e.kind === "cleared") n = 0; else if (e.trouble_code === code) n = e.occurrences; }
+    const n = occ[code] ?? 0;
     const o = el.querySelector(".fm-occ"); const txt = `${n}× occurred`;
     if (o.textContent !== txt) { o.textContent = txt; o.title = "occurrence counter of the ECU model (MODELED)"; o.classList.remove("bump"); void o.offsetWidth; o.classList.add("bump"); }
   }
@@ -669,19 +670,19 @@ function fmOnPoll(ecu) {
   FM.ecu = ecu; const fm = ecu.fault_memory; if (!fm || !fm.supported) return;
   const ev = fm.events, span = Math.max(60, Math.ceil((fm.uptime + 5) / 60) * 60);
   const tl = $("#fmTimeline");
-  if (ev.length !== FM.seenEvents || span !== FM.span || !tl.children.length) {
-    const fresh = ev.length > FM.seenEvents ? FM.seenEvents : ev.length;
-    FM.span = span; FM.seenEvents = ev.length;
+  if (fm.event_seq !== FM.seenEvents || span !== FM.span || !tl.children.length) {
+    const fresh = ev.findIndex(e => e.seq > FM.seenEvents), firstNew = fresh < 0 ? ev.length : fresh;
+    FM.span = span; FM.seenEvents = fm.event_seq;
     const lanes = [...new Map(ev.filter(e => e.trouble_code != null).map(e => [e.trouble_code, e])).values()];
-    const ticks = Array.from({length: span / 10 + 1}, (_, k) => k * 10);
+    const tick = span <= 60 ? 10 : span / 6, ticks = Array.from({length: span / tick + 1}, (_, k) => k * tick);
     const x = t => `${Math.min(100, t / span * 100)}%`;
     tl.innerHTML = `<div class="fm-tl">
       <div class="fm-tl-labels">${lanes.map(e => `<div class="lane-l"><b class="mono">${esc(fmCode(e.trouble_code))}</b> ${esc(e.text || e.dtc)}</div>`).join("") || `<div class="lane-l muted">No fault events yet</div>`}<div class="lane-axis"></div></div>
       <div class="fm-tl-plot">
-        ${(lanes.length ? lanes : [null]).map(l => `<div class="lane">${l ? ev.map((e, k) => e.trouble_code === l.trouble_code ? `<span class="mk ${esc(e.kind)}${k >= fresh ? " new" : ""}" style="left:${x(e.t)}" tabindex="0"><span class="tip"><b>${esc(e.kind === "stored" ? "Stored" : "Updated")} ${esc(fmCode(e.trouble_code))} · t+${esc(e.t.toFixed(1))} s</b>${esc(e.trigger)}<br><span class="muted">occurrence ${esc(e.occurrences)}</span></span></span>` : "").join("") : ""}</div>`).join("")}
+        ${(lanes.length ? lanes : [null]).map(l => `<div class="lane">${l ? ev.map((e, k) => e.trouble_code === l.trouble_code ? `<span class="mk ${esc(e.kind)}${k >= firstNew ? " new" : ""}" style="left:${x(e.t)}" tabindex="0"><span class="tip"><b>${esc(e.kind === "stored" ? "Stored" : "Updated")} ${esc(fmCode(e.trouble_code))} · t+${esc(e.t.toFixed(1))} s</b>${esc(e.trigger)}<br><span class="muted">occurrence ${esc(e.occurrences)}</span></span></span>` : "").join("") : ""}</div>`).join("")}
         ${ev.filter(e => e.kind === "cleared").map(e => `<span class="clr" style="left:${x(e.t)}" tabindex="0"><span class="tip"><b>Cleared · t+${esc(e.t.toFixed(1))} s</b>${esc(e.trigger)}</span></span>`).join("")}
         <span class="now" style="left:${x(fm.uptime)}"></span>
-        <div class="axis">${ticks.map(t => `<span style="left:${x(t)}">${t} s</span>`).join("")}</div>
+        <div class="axis">${ticks.map(t => `<span style="left:${x(t)}"${t === span ? ' class="end"' : ""}>${t}&nbsp;s</span>`).join("")}</div>
       </div></div>
       <div class="fm-tl-legend muted small"><span><i class="mk stored"></i> stored</span><span><i class="mk updated"></i> updated (occurrence +1)</span><span><i class="clr-i"></i> 0x14 clear</span><span><i class="now-i"></i> now</span></div>`;
   } else {

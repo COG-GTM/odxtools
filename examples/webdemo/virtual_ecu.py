@@ -66,6 +66,7 @@ class SomersaultBehavior:
         # trouble code -> {status, snapshot, occurrences, ...}
         self.fault_memory: dict[int, dict[str, Any]] = {}
         self.fault_events: list[dict[str, Any]] = []
+        self.fault_event_seq = 0
 
     def rest(self) -> None:
         """Let the acrobat recover (temperature, dizziness, happiness)
@@ -102,7 +103,9 @@ class SomersaultBehavior:
             occurrences=entry["occurrences"] + 1,
             last_seen=now,
             trigger=trigger)
+        self.fault_event_seq += 1
         self.fault_events.append({
+            "seq": self.fault_event_seq,
             "t": round(now, 2),
             "kind": kind,
             "trouble_code": dtc.trouble_code,
@@ -141,6 +144,11 @@ class SomersaultBehavior:
                 "supported": self.has_fault_memory,
                 "stored": len(self.fault_memory),
                 "events": list(self.fault_events),
+                "event_seq": self.fault_event_seq,
+                "occurrences": {
+                    str(code): entry["occurrences"]
+                    for code, entry in self.fault_memory.items()
+                },
                 "uptime": round(self._now(), 2),
             },
         }
@@ -342,7 +350,9 @@ class SomersaultBehavior:
     def _on_clear_dtcs(self, service: Any, raw_req: bytes, params: dict[str, Any]) -> bytes:
         cleared = len(self.fault_memory)
         self.fault_memory.clear()
+        self.fault_event_seq += 1
         self.fault_events.append({
+            "seq": self.fault_event_seq,
             "t": round(self._now(), 2),
             "kind": "cleared",
             "trouble_code": None,

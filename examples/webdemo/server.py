@@ -383,7 +383,10 @@ def _coerce(p: Parameter, value: Any) -> Any:
     sval = str(value).strip()
     if isinstance(dop, DtcDop):
         # numeric trouble code (e.g. 0x010001) or DTC short name
-        return int(sval, 0) if re.fullmatch(r"(0x)?[0-9a-fA-F]+", sval) else sval
+        if re.fullmatch(r"0[xX][0-9a-fA-F]+|[0-9a-fA-F]+", sval):
+            # displayed trouble codes (e.g. 010001) are hexadecimal
+            return int(sval.removeprefix("0x").removeprefix("0X"), 16)
+        return sval
     if ptype in (DataType.A_INT32, DataType.A_UINT32):
         return int(sval, 0)
     if ptype in (DataType.A_FLOAT32, DataType.A_FLOAT64):
@@ -843,6 +846,10 @@ def live_rest(session: int | None = None) -> dict[str, Any]:
         if session is not None and session != live.session_id:
             raise HTTPException(409, "live session was replaced by another client")
         live.behavior.rest()
+        # the acrobat's diagnostic session has ended: the tester's view
+        # of the ECU state follows
+        for fsm in live.fsms.values():
+            fsm.active_state = fsm.state_chart.start_state
         return live.status(10**12)
 
 
