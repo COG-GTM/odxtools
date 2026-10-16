@@ -277,11 +277,11 @@ async function loadLiveSvcForm() {
   buildForm($("#liveForm"), d.request, () => {});
 }
 $("#liveStart").onclick = connectLive;
-$("#liveReset").onclick = async () => { await api("/api/live/reset", {method: "POST"}); S.live.charts = null; poll(); };
+$("#liveReset").onclick = async () => { await api("/api/live/reset", {method: "POST"}); S.live.charts = null; S.lastTrans = null; poll(); };
 
 async function connectLive() {
   const st = await api("/api/live/start", {method: "POST", body: {db: S.db, layer: $("#liveLayer").value, chart: $("#liveChart").value || null}});
-  S.after = 0; S.live = st; S.frameTimes = [];
+  S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
   $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
   $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
   $("#liveStart").textContent = "Reconnect";
@@ -303,7 +303,10 @@ async function poll() {
   let st; try { st = await api(`/api/live/poll?after=${S.after}`); } catch { return; }
   if (!st.running) return;
   for (const f of st.frames) addFrame(f);
-  for (const t of st.transactions) addTx(t);
+  for (const t of st.transactions) {
+    addTx(t);
+    if (!t.blocked && t.state_before && t.state_before !== t.state_after) S.lastTrans = {chart: t.chart, from: t.state_before, to: t.state_after, service: t.service};
+  }
   const all = [...st.frames, ...st.transactions]; if (all.length) S.after = Math.max(S.after, ...all.map(x => x.seq));
   renderGauges(st.ecu);
   if (JSON.stringify(st.charts) !== JSON.stringify(S.live?.charts)) { S.live = {...S.live, ...st}; drawChart(); }
@@ -372,7 +375,9 @@ function drawChart() {
     svg += `<g><ellipse cx="${x}" cy="${y}" rx="44" ry="22" fill="${on ? "#000" : "#fff"}" stroke="${on ? "#000" : "#bdbdbd"}" stroke-width="1.2"></ellipse>
       <text x="${x}" y="${y + 4}" font-size="11.5" text-anchor="middle" fill="${on ? "#fff" : "#333"}" font-weight="${on ? 600 : 400}">${esc(s)}</text></g>`;
   }
-  const rows = sc.transitions.map(t => `<tr${S.live && t.to === active && t.services.length ? ' class="cur"' : ""}><td>${esc(t.name)}</td><td class="mono">${esc(t.from)} &rarr; ${esc(t.to)}</td><td class="mono">${esc([...new Set(t.services)].join(", ") || "\u2013")}</td></tr>`).join("");
+  const lt = S.lastTrans?.chart === sc.name && S.lastTrans.to === active ? S.lastTrans : null;
+  const ran = lt && sc.transitions.find(t => t.from === lt.from && t.to === lt.to && (!lt.service || t.services.includes(lt.service)));
+  const rows = sc.transitions.map(t => `<tr${t === ran ? ' class="cur"' : ""}><td>${esc(t.name)}</td><td class="mono">${esc(t.from)} &rarr; ${esc(t.to)}</td><td class="mono">${esc([...new Set(t.services)].join(", ") || "\u2013")}</td></tr>`).join("");
   $("#chartSvg").innerHTML = svg + `</svg><table class="transitions"><tr><th>Transition</th><th>States</th><th>Triggered by</th></tr>${rows}</table>`;
 }
 
