@@ -586,24 +586,30 @@ const FM_RECIPES = [
   {id: "hot", title: "Overheat", needs: ["do_forward_flips"],
     what: "Repeated flips (fire ring lit, 4 °C each) until the temperature crosses the limit",
     async run() {
-      const ring = fmHas("set_operation_params");
-      if (ring) await sendLive({service: "set_operation_params", params: {use_fire_ring: "true"}});
+      const ring = fmHas("set_operation_params"), prev = !!S.ecu.fire_ring;
+      const setRing = v => sendLive({service: "set_operation_params", params: {use_fire_ring: String(v)}});
+      // the ECU refuses set_operation_params once it is too hot, so restore the ring before the last flips
+      let lit = ring && !prev;
+      if (lit) await setRing(true);
       try {
         const until = Date.now() + 120000;
         while (S.ecu && Date.now() < until) {
           const e = S.ecu, lim = e.limits;
           if (e.temperature > lim.temperature) return;
-          const need = Math.ceil((lim.temperature - e.temperature + 0.01) / (e.fire_ring ? 4 : 2.5));
+          let n;
+          if (lit) {
+            n = Math.floor((lim.temperature - 0.5 - e.temperature) / 4);
+            if (n < 1) { await setRing(false); lit = false; continue; }
+          } else n = Math.ceil((lim.temperature - e.temperature + 0.01) / (e.fire_ring ? 4 : 2.5));
+          n = Math.min(10, n);
           const room = Math.floor((lim.dizziness - 1 - e.dizziness) / 14);
-          // wait until one burst can reach the limit, so cooling cannot undo the heat in between
-          if (room < Math.min(need, 10)) { fmProgress(`<span class="tag model">MODELED</span> letting the dizziness settle (${esc(e.dizziness)} / ${esc(lim.dizziness)}) so ${need} flip${need > 1 ? "s" : ""} in a row are not refused`); await sleep(700); await poll(); continue; }
-          const n = Math.min(10, need);
-          fmProgress(`<span class="tag model">MODELED</span> ${n} forward flip${n > 1 ? "s" : ""} · ${esc(e.temperature)} °C → limit ${esc(lim.temperature)} °C`);
+          if (room < n) { fmProgress(`<span class="tag model">MODELED</span> letting the dizziness settle (${esc(e.dizziness)} / ${esc(lim.dizziness)}) so ${n} flip${n > 1 ? "s" : ""} in a row are not refused`); await sleep(700); await poll(); continue; }
+          fmProgress(`<span class="tag model">MODELED</span> ${n} forward flip${n > 1 ? "s" : ""}${e.fire_ring ? " through the fire ring" : ""} · ${esc(e.temperature)} °C → limit ${esc(lim.temperature)} °C`);
           await sendLive({service: "do_forward_flips", params: {forward_soberness_check: "0x12", num_flips: String(n)}});
           await sleep(400);
         }
       } finally {
-        if (ring && S.live) await sendLive({service: "set_operation_params", params: {use_fire_ring: "false"}});
+        if (lit && S.live && S.ecu && S.ecu.temperature <= S.ecu.limits.temperature) await setRing(false);
       }
     }},
 ];
