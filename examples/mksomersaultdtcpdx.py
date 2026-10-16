@@ -19,7 +19,11 @@ import odxtools
 import odxtools.uds as uds
 from examples import somersaultecu
 from odxtools.compumethods.compucategory import CompuCategory
+from odxtools.compumethods.compuinternaltophys import CompuInternalToPhys
+from odxtools.compumethods.compurationalcoeffs import CompuRationalCoeffs
+from odxtools.compumethods.compuscale import CompuScale
 from odxtools.compumethods.identicalcompumethod import IdenticalCompuMethod
+from odxtools.compumethods.linearcompumethod import LinearCompuMethod
 from odxtools.database import Database
 from odxtools.dataobjectproperty import DataObjectProperty
 from odxtools.description import Description
@@ -141,11 +145,29 @@ def build_database() -> Database:
             _uint_dop("status_mask", 8),
             _uint_dop("snapshot_record_number", 8),
             _uint_dop("snapshot_temperature", 8, celsius),
-            _uint_dop("snapshot_dizziness", 8, OdxLinkRef.from_id(percent.odx_id)),
             _uint_dop("snapshot_total_flips", 16),
             _uint_dop("snapshot_timestamp", 16, second),
     ]:
         ddds.data_object_props.append(dop)
+    # the raw dizziness level (0..255) is reported in percent
+    ddds.data_object_props.append(
+        DataObjectProperty(
+            odx_id=_id("snapshot_dizziness"),
+            short_name="snapshot_dizziness",
+            diag_coded_type=_uint(8),
+            physical_type=PhysicalType(base_data_type=DataType.A_FLOAT64),
+            compu_method=LinearCompuMethod(
+                category=CompuCategory.LINEAR,
+                compu_internal_to_phys=CompuInternalToPhys(compu_scales=[
+                    CompuScale(
+                        compu_rational_coeffs=CompuRationalCoeffs(
+                            value_type=DataType.A_FLOAT64, numerators=[0, 100], denominators=[255]),
+                        domain_type=DataType.A_UINT32,
+                        range_type=DataType.A_FLOAT64)
+                ]),
+                internal_type=DataType.A_UINT32,
+                physical_type=DataType.A_FLOAT64),
+            unit_ref=OdxLinkRef.from_id(percent.odx_id)))
 
     # the DTC-DOP: three byte DTC numbers which are mapped to trouble codes
     ddds.dtc_dops.append(

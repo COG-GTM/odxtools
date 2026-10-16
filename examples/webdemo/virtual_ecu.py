@@ -128,7 +128,8 @@ class SomersaultBehavior:
                 "occurrences": 0,
                 "snapshot": {
                     "temperature": min(255, self.sensor_temperature),
-                    "dizziness": int(round(min(100.0, self.dizziness * 100 / 255))),
+                    # percent of the raw 0..255 level, see the snapshot_dizziness DOP
+                    "dizziness": min(255, int(self.dizziness)) * 100 / 255,
                     "total_flips": min(0xFFFF, self.total_flips),
                     "timestamp": min(0xFFFF, int(self._seconds())),
                 },

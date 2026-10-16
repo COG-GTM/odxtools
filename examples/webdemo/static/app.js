@@ -675,9 +675,9 @@ async function fmSnapshot(code) {
     if (r?.kind !== "positive") { d.innerHTML = `<div class="hd"><h3>Snapshot record 0x01 · ${esc(fmHex(code))}</h3><button class="close">Close</button></div>${fmNrcHtml(tx)}`; }
     else {
       const sn = r.params.snapshot || {}, lim = S.fm.ecu?.limits || {temperature: 65, dizziness: 180};
-      const dizzyLim = Math.round(lim.dizziness / 255 * 100);
+      const dizzyLim = lim.dizziness * 100 / 255, fmt = x => Number.isInteger(x) ? x : Number(x).toFixed(1);
       // temperature faults above its limit, dizziness at its limit (as in the ECU model)
-      const g = (label, v, max, l, unit, atLimit) => `<div class="gauge"><div class="lab"><span>${label}</span><span class="mono">${esc(v)}${unit}</span></div><div class="bar"><div class="fill" style="width:0%;background:${(atLimit ? v >= l : v > l) ? "#d92121" : "#000"}" data-w="${Math.min(100, v / max * 100)}"></div><div class="lim" style="left:${l / max * 100}%" title="limit ${l}${unit}"></div></div></div>`;
+      const g = (label, v, max, l, unit, atLimit) => `<div class="gauge"><div class="lab"><span>${label}</span><span class="mono">${esc(fmt(v))}${unit}</span></div><div class="bar"><div class="fill" style="width:0%;background:${(atLimit ? v >= l - 1e-9 : v > l) ? "#d92121" : "#000"}" data-w="${Math.min(100, v / max * 100)}"></div><div class="lim" style="left:${l / max * 100}%" title="limit ${fmt(l)}${unit}"></div></div></div>`;
       d.innerHTML = `<div class="hd"><h3>Snapshot record 0x${esc(Number(r.params.record_number).toString(16).padStart(2, "0"))} · ${esc(fmHex(r.params.dtc?.trouble_code))} ${esc(r.params.dtc?.text || "")}</h3><button class="close">Close</button></div>
         <div class="muted small" style="margin:0">Frozen by the ECU when the fault was first stored · decoded by odxtools from the snapshot_record structure</div>
         <div class="fm-gauges">${g("Temperature", sn.temperature, 100, lim.temperature, " °C")}${g("Dizziness", sn.dizziness, 100, dizzyLim, " %", true)}</div>
