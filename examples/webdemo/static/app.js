@@ -138,7 +138,10 @@ function selectLayer(name) {
 
 async function selectService(name) {
   $$("#svcList .svc").forEach(el => el.classList.toggle("active", el.dataset.s === name));
-  const d = S.detail = await api(`/api/db/${encodeURIComponent(S.db)}/layer/${S.layer.name}/service/${name}`);
+  const db = S.db, layer = S.layer;
+  const d = await api(`/api/db/${encodeURIComponent(db)}/layer/${layer.name}/service/${name}`);
+  if (S.db !== db || S.layer !== layer || !$(`#svcList .svc.active[data-s="${CSS.escape(name)}"]`)) return;
+  S.detail = d;
   $("#svcHeader").innerHTML = `<div class="row" style="margin:0"><h2 style="margin:0;font-size:18px;text-transform:none;color:#fff">${esc(d.name)}</h2>
     <span class="badge">${esc(d.semantic || "")}</span>${d.preconditions.length ? `<span class="badge gnr">pre-conditions: ${esc(d.preconditions.join(", "))}</span>` : ""}</div>
     ${d.description || d.long_name ? `<div class="muted" style="margin-top:6px">${esc(d.description || d.long_name)}</div>` : ""}`;

@@ -149,6 +149,30 @@ class TestWebDemo(unittest.TestCase):
             self.server._live.close()
             self.server._live = None
 
+    def test_raw_requests_use_state_chart(self) -> None:
+        self.client.post(
+            "/api/live/start",
+            json={
+                "db": "somersault.pdx",
+                "layer": "somersault_lazy",
+                "chart": "angry_chart"
+            })
+        try:
+            # raw session_start (bribe=1) with a trailing byte
+            tx = self.client.post("/api/live/send", json={"raw": "10 00 01 00"}).json()
+            self.assertEqual(tx["service"], "session_start")
+            self.assertEqual(tx["state_after"], "on_street")
+            tx = self.client.post("/api/live/send", json={"raw": "10 01"}).json()
+            self.assertEqual(tx["service"], "session_stop")
+            self.assertEqual(tx["state_after"], "in_bed")
+            # without a bribe the chart blocks the raw telegram, too
+            tx = self.client.post("/api/live/send", json={"raw": "10 00 00 00"}).json()
+            self.assertTrue(tx["blocked"])
+        finally:
+            assert self.server._live is not None
+            self.server._live.close()
+            self.server._live = None
+
 
 if __name__ == "__main__":
     unittest.main()

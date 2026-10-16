@@ -7,6 +7,7 @@ Run with ``python3 examples/webdemo/server.py`` and open
 http://localhost:8000.
 """
 import argparse
+import io
 import itertools
 import math
 import os
@@ -291,7 +292,11 @@ async def upload(file: UploadFile) -> dict[str, Any]:
                 f.write(chunk)
         try:
             t0 = time.perf_counter()
-            db = odxtools.load_pdx_file(tmp)
+            # load from memory so that no handle to the temporary
+            # file stays open (os.replace fails on Windows otherwise)
+            db = Database()
+            db.add_pdx_file(io.BytesIO(tmp.read_bytes()))
+            db.refresh()
             db._load_time_ms = (time.perf_counter() - t0) * 1000  # type: ignore[attr-defined]
         except Exception as e:
             raise HTTPException(400, f"could not load PDX: {e}") from e
@@ -631,11 +636,8 @@ class LiveSession:
             return None, {}
         settable = {p.short_name for p in service.request.parameters if p.is_settable}
         params = {k: v for k, v in msgs[0].param_dict.items() if k in settable}
-        try:
-            if bytes(service.request.encode(**params)) != pdu:
-                return None, {}
-        except Exception:
-            return None, {}
+        # telegrams with trailing bytes still decode (and are executed
+        # by the ECU), so they are subject to the state chart as well
         return service, params
 
     def _record(self,
