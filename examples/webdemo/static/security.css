@@ -21,7 +21,7 @@
 .padlock .shackle{transform-box:fill-box;transform-origin:center bottom}
 .padlock.unlocking .shackle{transform:translateY(-7px);stroke:var(--acc)}
 .padlock.unlocking .lbody,.padlock.unlocking .hole{stroke:var(--acc)}
-.padlock.unlocking .hole{animation:sa-pulse .6s ease-in-out infinite alternate}
+.padlock.unlocking .hole{animation:sa-pulse .3s ease-in-out infinite alternate}
 .padlock.unlocked .shackle{transform:translateY(-18px)}
 .padlock.lockedout .shackle,.padlock.lockedout .lbody,.padlock.lockedout .hole{stroke:var(--bad)}
 .padlock.offline .shackle,.padlock.offline .lbody,.padlock.offline .hole{stroke:#bdbdbd}
