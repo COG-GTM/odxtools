@@ -272,8 +272,9 @@ $("#liveLayer").onchange = () => { updateLiveChartOptions(); connectLive(); };
 $("#liveChart").onchange = async () => { if (!$("#liveChart").value) return; await api("/api/live/chart", {method: "POST", body: {chart: $("#liveChart").value}}); drawChart(); };
 $("#liveSvc").onchange = loadLiveSvcForm;
 async function loadLiveSvcForm() {
-  const name = $("#liveSvc").value; if (!name) return;
-  const d = await api(`/api/db/${encodeURIComponent(S.db)}/layer/${$("#liveLayer").value}/service/${name}`);
+  const name = $("#liveSvc").value, db = S.db, layer = $("#liveLayer").value; if (!name) return;
+  const d = await api(`/api/db/${encodeURIComponent(db)}/layer/${layer}/service/${name}`);
+  if (db !== S.db || layer !== $("#liveLayer").value || name !== $("#liveSvc").value) return;
   buildForm($("#liveForm"), d.request, () => {});
 }
 $("#liveStart").onclick = connectLive;
@@ -294,10 +295,9 @@ async function connectLive() {
   poll();
 }
 
-// Show whichever session the server is actually running (a later reconnect or another tab may have replaced ours).
+// Follow the server's session when it matches the selected ECU (e.g. after overlapping reconnects or another tab).
 function adoptSession(st) {
   S.gen = (S.gen || 0) + 1; S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
-  if (st.db === S.db && st.layer !== $("#liveLayer").value && liveLayerSummary() && S.summary.layers.some(l => l.name === st.layer)) { $("#liveLayer").value = st.layer; updateLiveChartOptions(); }
   if (st.chart && [...$("#liveChart").options].some(o => o.value === st.chart)) $("#liveChart").value = st.chart;
   $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
   $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
@@ -317,8 +317,14 @@ $("#liveLong").onclick = () => { $("#liveRaw").value = "ba 12 03 " + Array.from(
 async function poll() {
   const gen = S.gen;
   let st; try { st = await api(`/api/live/poll?after=${S.after}`); } catch { return; }
-  if (gen !== S.gen || !st.running) return;
-  if (st.session !== S.live?.session) { adoptSession(st); return poll(); }
+  if (gen !== S.gen || !st.running || !S.live) return;
+  if (st.session !== S.live.session) {
+    if (st.db === S.db && st.layer === $("#liveLayer").value) { adoptSession(st); return poll(); }
+    S.gen++; S.live = null; S.lastTrans = null;
+    $("#liveIds").innerHTML = `<span class="pill off">Disconnected</span> Another client replaced the live session (${esc(st.db)} / ${esc(st.layer)}). Connect or send to start a session for the selected ECU.`;
+    $("#liveStart").textContent = "Connect"; drawChart();
+    return;
+  }
   const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;
   for (const f of st.frames.filter(fresh)) addFrame(f);
   for (const t of st.transactions.filter(fresh)) {
