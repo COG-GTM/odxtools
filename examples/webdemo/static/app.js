@@ -74,12 +74,13 @@ function renderOverview() {
   const cols = {"PROTOCOL": 0, "FUNCTIONAL-GROUP": 1, "BASE-VARIANT": 2, "ECU-SHARED-DATA": 1, "ECU-VARIANT": 3};
   const byCol = {}; L.forEach(l => (byCol[cols[l.variant_type] ?? 1] ||= []).push(l));
   const usedCols = Object.keys(byCol).map(Number).sort();
-  const W = 640, colW = W / usedCols.length, boxW = Math.min(170, colW - 30), boxH = 58;
+  const W = 720, colW = W / usedCols.length, boxW = Math.min(196, colW - 34), boxH = 58;
   const maxRows = Math.max(...Object.values(byCol).map(a => a.length));
-  const H = Math.max(180, maxRows * (boxH + 34) + 30);
+  const gap = 30 + 13 * Math.max(0, ...L.map(l => l.not_inherited.length));
+  const H = Math.max(180, maxRows * (boxH + gap) + 30);
   const pos = {};
   usedCols.forEach((c, ci) => byCol[c].forEach((l, i) => {
-    const n = byCol[c].length, y = H / 2 + (i - (n - 1) / 2) * (boxH + 34);
+    const n = byCol[c].length, y = H / 2 + (i - (n - 1) / 2) * (boxH + gap);
     pos[l.name] = {x: ci * colW + (colW - boxW) / 2, y: y - boxH / 2, l};
   }));
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#5b6b8c"/></marker>
@@ -88,7 +89,7 @@ function renderOverview() {
     const a = pos[p], b = pos[l.name]; if (!a || !b) continue;
     const x1 = a.x + boxW, y1 = a.y + boxH / 2, x2 = b.x, y2 = b.y + boxH / 2, mx = (x1 + x2) / 2;
     svg += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2 - 2},${y2}" stroke="#5b6b8c" fill="none" stroke-width="1.5" marker-end="url(#ar)"/>`;
-    if (l.not_inherited.length) svg += `<text x="${b.x + boxW / 2}" y="${b.y - 7}" fill="#f87171" font-size="10" text-anchor="middle">NOT-INHERITED: ${esc(l.not_inherited.join(", "))}</text>`;
+    l.not_inherited.forEach((n, k) => svg += `<text x="${b.x + 10}" y="${b.y + boxH + 14 + 13 * k}" fill="#f87171" font-size="10.5">✕ ${esc(n)} <tspan fill="#7f8ba3">not inherited</tspan></text>`);
   }
   for (const {x, y, l} of Object.values(pos)) {
     svg += `<g><rect x="${x}" y="${y}" width="${boxW}" height="${boxH}" rx="10" fill="url(#gb)" stroke="${l.variant_type === "ECU-VARIANT" ? "#00adef" : "#3a4a6b"}"/>
@@ -128,6 +129,11 @@ function selectLayer(name) {
   $("#svcList").innerHTML = S.layer.services.map(s => `<div class="svc" data-s="${esc(s.name)}"><span>${esc(s.name)}</span><span class="sid">${esc(s.request_hex || "")}</span></div>`).join("") || `<div class="muted">no services</div>`;
   $$("#svcList .svc").forEach(el => el.onclick = () => selectService(el.dataset.s));
   if (S.layer.services.length) selectService((S.layer.services.find(s => s.name === "do_forward_flips") || S.layer.services[0]).name);
+  else {
+    S.detail = null;
+    $("#svcHeader").innerHTML = `<div class="muted">${esc(S.layer.name)} defines no diagnostic services.</div>`;
+    $("#encForm").innerHTML = ""; $("#encOut").innerHTML = ""; $("#svcLayouts").innerHTML = "";
+  }
 }
 
 async function selectService(name) {
@@ -167,9 +173,11 @@ let encTimer;
 function encodeNow() {
   clearTimeout(encTimer);
   encTimer = setTimeout(async () => {
-    if (!S.detail?.request) { $("#encOut").innerHTML = ""; return; }
+    const detail = S.detail;
+    if (!detail?.request) { $("#encOut").innerHTML = ""; return; }
     try {
-      const r = await api(`/api/db/${encodeURIComponent(S.db)}/encode`, {method: "POST", body: {layer: S.layer.name, service: S.detail.name, params: formValues($("#encForm"))}});
+      const r = await api(`/api/db/${encodeURIComponent(S.db)}/encode`, {method: "POST", body: {layer: S.layer.name, service: detail.name, params: formValues($("#encForm"))}});
+      if (S.detail !== detail) return;
       $("#encOut").innerHTML = bytesHtml(r) + paramsKv(r.params) + `<div class="muted small" style="margin-top:6px">Round-trip: encoded by odxtools, then re-decoded with <code>DiagLayer.decode()</code> → identified as <b>${esc(r.coding_object)}</b></div>`;
     } catch (e) { $("#encOut").innerHTML = `<div class="err">✕ ${esc(e.message)}</div>`; }
   }, 120);
@@ -197,7 +205,7 @@ function paramsKv(params) {
 function layoutHtml(o, cls) {
   const rows = o.params.map((p, i) => {
     const d = p.dop || {};
-    let val = p.coded_value != null ? `<span class="mono">${Array.isArray(p.coded_value) ? p.coded_value.join(" | ") : "0x" + Number(p.coded_value).toString(16)}</span>` : "";
+    let val = p.coded_value != null ? `<span class="mono">${esc(Array.isArray(p.coded_value) ? p.coded_value.join(" | ") : "0x" + Number(p.coded_value).toString(16))}</span>` : "";
     if (d.texttable) val = d.texttable.map(t => `<span class="mono">${esc(t.internal)}→"${esc(t.physical)}"</span>`).join(" ");
     if (p.table) val = `table <b>${esc(p.table.name)}</b>: ${p.table.rows.map(esc).join(", ")}`;
     return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${PALETTE[i % PALETTE.length]}"></i> <b>${esc(p.name)}</b></td><td>${esc(p.type)}</td>

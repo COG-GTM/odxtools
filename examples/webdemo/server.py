@@ -9,6 +9,7 @@ http://localhost:8000.
 import argparse
 import itertools
 import math
+import os
 import re
 import sys
 import tempfile
@@ -17,7 +18,7 @@ import time
 import warnings
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import can
 import uvicorn
@@ -40,6 +41,7 @@ from odxtools.diaglayers.diaglayer import DiagLayer  # noqa: E402
 from odxtools.diaglayers.hierarchyelement import HierarchyElement  # noqa: E402
 from odxtools.diagservice import DiagService  # noqa: E402
 from odxtools.isotp_state_machine import IsoTpStateMachine  # noqa: E402
+from odxtools.message import Message  # noqa: E402
 from odxtools.odxtypes import DataType  # noqa: E402
 from odxtools.parameters.parameter import Parameter  # noqa: E402
 from odxtools.response import Response, ResponseType  # noqa: E402
@@ -52,6 +54,7 @@ odxtools.exceptions.strict_mode = False
 EXAMPLES = HERE.parent
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "odx-workbench-uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 app = FastAPI(title="ODX Diagnostic Workbench")
 
@@ -277,13 +280,26 @@ async def upload(file: UploadFile) -> dict[str, Any]:
     if not file.filename or not file.filename.lower().endswith(".pdx"):
         raise HTTPException(400, "please upload a .pdx file")
     dest = UPLOAD_DIR / Path(file.filename).name
-    dest.write_bytes(await file.read())
-    _db_cache.pop(dest.name, None)
+    tmp = UPLOAD_DIR / f".{dest.name}.{threading.get_ident()}.{time.monotonic_ns()}.part"
     try:
-        get_db(dest.name)
-    except Exception as e:
-        dest.unlink(missing_ok=True)
-        raise HTTPException(400, f"could not load PDX: {e}") from e
+        size = 0
+        with tmp.open("wb") as f:
+            while chunk := await file.read(1 << 20):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "PDX file too large")
+                f.write(chunk)
+        try:
+            t0 = time.perf_counter()
+            db = odxtools.load_pdx_file(tmp)
+            db._load_time_ms = (time.perf_counter() - t0) * 1000  # type: ignore[attr-defined]
+        except Exception as e:
+            raise HTTPException(400, f"could not load PDX: {e}") from e
+        with _db_lock:
+            os.replace(tmp, dest)
+            _db_cache[dest.name] = db
+    finally:
+        tmp.unlink(missing_ok=True)
     return {"name": dest.name}
 
 
@@ -485,6 +501,22 @@ def decode_pdu(dl: DiagLayer, pdu: bytes, req: bytes | None) -> list[dict[str, A
         msgs = dl.decode_response(pdu, req) if req else dl.decode(pdu)
     except Exception:
         msgs = []
+    msgs = [m for m in msgs if m.coding_object is not None]
+    if not msgs and req:
+        # responses which may be sent for any request
+        for gnr in getattr(dl, "global_negative_responses", []):
+            try:
+                param_dict = gnr.decode(pdu)
+            except Exception:
+                continue
+            msgs = [
+                Message(
+                    coded_message=pdu,
+                    service=cast(Any, None),
+                    coding_object=gnr,
+                    param_dict=param_dict)
+            ]
+            break
     if not msgs:
         return [describe_raw_uds(pdu)]
     return [describe_message(m) for m in msgs]
@@ -555,6 +587,7 @@ class LiveSession:
                                                                          Any]) -> dict[str, Any]:
         fsm = self.fsms.get(self.chart) if self.chart else None
         executor = None
+        state_obj_before = fsm.active_state if fsm else None
         state_before = fsm.active_state.short_name if fsm else None
         if fsm is not None and service is not None:
             fsm.succeeded = True
@@ -575,9 +608,35 @@ class LiveSession:
                 executor.send(resp)
             except (StopIteration, Exception):
                 pass
+            # the ECU refused the request: it must not change the tester's
+            # view of the ECU state
+            if fsm is not None and state_obj_before is not None and resp[:1] == bytes(
+                [uds.NegativeResponseId]):
+                fsm.active_state = state_obj_before
         tx = self._record(pdu, resp, service, latency, state_before)
         tx["frames"] = len(self.frames) - frames_before
         return tx
+
+    def identify_request(self, pdu: bytes) -> tuple[DiagService | None, dict[str, Any]]:
+        """Map a raw telegram to the ODX service it unambiguously encodes
+        so that it runs through the state chart like a named request."""
+        try:
+            msgs = self.dl.decode(pdu)
+        except Exception:
+            return None, {}
+        if len(msgs) != 1 or not isinstance(msgs[0].service, DiagService):
+            return None, {}
+        service = msgs[0].service
+        if service.request is None or msgs[0].coding_object is not service.request:
+            return None, {}
+        settable = {p.short_name for p in service.request.parameters if p.is_settable}
+        params = {k: v for k, v in msgs[0].param_dict.items() if k in settable}
+        try:
+            if bytes(service.request.encode(**params)) != pdu:
+                return None, {}
+        except Exception:
+            return None, {}
+        return service, params
 
     def _record(self,
                 pdu: bytes,
@@ -647,6 +706,7 @@ def live_start(body: LiveStartBody) -> dict[str, Any]:
 
 
 def _require_live() -> LiveSession:
+    """Must be called while holding `_live_lock`."""
     if _live is None:
         raise HTTPException(409, "virtual network not running")
     return _live
@@ -660,11 +720,12 @@ class LiveSendBody(BaseModel):
 
 @app.post("/api/live/send")
 def live_send(body: LiveSendBody) -> dict[str, Any]:
-    live = _require_live()
     with _live_lock:
+        live = _require_live()
         if body.raw:
             pdu = _hex(body.raw)
-            return live.send(pdu, None, {})
+            service, params = live.identify_request(pdu)
+            return live.send(pdu, service, params)
         if not body.service:
             raise HTTPException(400, "service or raw required")
         s = get_service(live.dl, body.service)
@@ -683,20 +744,22 @@ class ChartBody(BaseModel):
 
 @app.post("/api/live/chart")
 def live_chart(body: ChartBody) -> dict[str, Any]:
-    live = _require_live()
-    if body.chart not in live.fsms:
-        raise HTTPException(404, "unknown state chart")
-    live.chart = body.chart
-    return live.status(10**12)
+    with _live_lock:
+        live = _require_live()
+        if body.chart not in live.fsms:
+            raise HTTPException(404, "unknown state chart")
+        live.chart = body.chart
+        return live.status(10**12)
 
 
 @app.post("/api/live/reset")
 def live_reset() -> dict[str, Any]:
-    live = _require_live()
-    live.behavior.reset()
-    for fsm in live.fsms.values():
-        fsm.active_state = fsm.state_chart.start_state
-    return live.status(10**12)
+    with _live_lock:
+        live = _require_live()
+        live.behavior.reset()
+        for fsm in live.fsms.values():
+            fsm.active_state = fsm.state_chart.start_state
+        return live.status(10**12)
 
 
 @app.get("/api/live/poll")

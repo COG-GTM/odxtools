@@ -269,7 +269,13 @@ class CanNetwork:
             req = self.ecu_stack.recv(block=True, timeout=0.2)
             if req is None:
                 continue
-            resp = self.behavior.handle(bytes(req))
+            try:
+                resp = self.behavior.handle(bytes(req))
+            except Exception:
+                # the behavior model does not understand this ECU
+                # variant's services: reply with a generalReject
+                # instead of silently dying
+                resp = bytes([uds.NegativeResponseId, req[0] if req else 0, 0x10])
             if resp:
                 self.ecu_stack.send(resp)
 

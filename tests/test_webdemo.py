@@ -105,6 +105,39 @@ class TestWebDemo(unittest.TestCase):
             tx = self.client.post("/api/live/send", json={"raw": "ba1203" + "00" * 17}).json()
             self.assertGreater(tx["frames"], 3)
 
+            # a scripted run keeps flipping until the modeled ECU refuses
+            for _ in range(6):
+                tx = self.client.post(
+                    "/api/live/send",
+                    json={
+                        "service": "do_forward_flips",
+                        "params": {
+                            "forward_soberness_check": "0x12",
+                            "num_flips": "5"
+                        }
+                    })
+                self.assertEqual(tx.status_code, 200)
+            # the overheated acrobat answers with a GLOBAL-NEG-RESPONSE
+            self.assertEqual(tx.json()["response"]["coding_object"], "too_hot")
+
+            # raw telegrams which encode an ODX service run through the state chart
+            tx = self.client.post("/api/live/send", json={"raw": "1001"}).json()
+            self.assertEqual(tx["service"], "session_stop")
+            self.assertEqual(tx["state_after"], "in_bed")
+
+            # a session_start refused by the ECU must not advance the state chart
+            assert self.server._live is not None
+            self.server._live.behavior.temperature = 99.0
+            tx = self.client.post(
+                "/api/live/send", json={
+                    "service": "session_start",
+                    "params": {
+                        "bribe": "1"
+                    }
+                }).json()
+            self.assertEqual(tx["response"]["coding_object"], "too_hot")
+            self.assertEqual(tx["state_after"], "in_bed")
+
             tx = self.client.post("/api/live/send", json={"raw": "3101ff00"}).json()
             self.assertEqual(tx["response"]["hex"], "7f3111")
 
