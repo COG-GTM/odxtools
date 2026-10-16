@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Diagnostic Workbench | Mercedes-Benz</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/security.css">
 </head>
 <body>
 <header>
@@ -28,6 +29,7 @@
   <button data-tab="overview" class="active">Overview</button>
   <button data-tab="services">Service Inspector</button>
   <button data-tab="live">Live Virtual ECU</button>
+  <button data-tab="security">Security Access</button>
   <button data-tab="decode">Decoder</button>
   <button data-tab="compare">Compare</button>
 </nav>
@@ -100,6 +102,91 @@
     </div>
   </section>
 
+  <!-- ================= Security Access: UDS 0x27 seed & key (security.js / security.css) ================= -->
+  <section id="tab-security" class="tab sa">
+    <div class="card sa-hero">
+      <div id="saRibbon" class="sa-ribbon" hidden>Demo PDX extension</div>
+      <h2 class="sa-title">Security Access</h2>
+      <p class="sa-lede">The ECU only performs a <b>headstand</b> once the tester has answered its random seed with the matching key: UDS 0x27 over virtual CAN, gated by an ODX state chart.</p>
+      <div class="row sa-bar">
+        <button id="saConnect" class="btn">Connect</button>
+        <span id="saConn" class="muted"></span>
+      </div>
+      <div class="honesty"><span class="tag real">REAL</span> odxtools decode &middot; <span class="tag real">REAL</span> ODX state chart (<code>odxtools.statemachine.StateMachine</code>) &middot; <span class="tag real">REAL</span> CAN / ISO-TP (python-can virtual bus, can-isotp)
+        &nbsp;&nbsp;<span class="tag model">MODELED</span> ECU physics (seed, attempt counter, 10 s delay) &middot; <span class="tag model">MODELED</span> demo key algorithm</div>
+    </div>
+    <div id="saEmpty" class="card sa-empty" hidden>
+      <div class="sa-illu"><i></i><i></i><i></i></div>
+      <h2>No SecurityAccess services in this database</h2>
+      <p class="muted">The bundled somersault PDX has no UDS 0x27 services. The demo PDX extension adds them, plus a <code>security_chart</code>.</p>
+      <button id="saOpenDemo" class="btn">Open somersault_security.pdx</button>
+    </div>
+    <div id="saBody">
+      <div class="sa-grid1">
+        <div class="card sa-lock">
+          <h3>ECU security state</h3>
+          <svg id="saPadlock" class="padlock locked" viewBox="0 0 120 140" aria-hidden="true">
+            <path class="shackle" d="M36 66 V44 a24 24 0 0 1 48 0 V66"/>
+            <rect class="lbody" x="20" y="64" width="80" height="62"/>
+            <circle class="hole" cx="60" cy="90" r="7"/><path class="hole" d="M60 97 V110"/>
+          </svg>
+          <div id="saStateLabel" class="sa-state">Locked</div>
+          <div id="saStateSub" class="sa-statesub"></div>
+          <div class="sa-meters">
+            <div>
+              <h3>Wrong keys</h3>
+              <div class="sa-dots"><i></i><i></i><i></i></div>
+              <div id="saAttempts" class="muted small">0 of 3</div>
+            </div>
+            <div class="sa-timer">
+              <svg id="saRing" viewBox="0 0 64 64" aria-hidden="true"><circle class="track" cx="32" cy="32" r="28"/><circle class="prog" cx="32" cy="32" r="28" transform="rotate(-90 32 32)"/><text id="saRingText" x="32" y="37" text-anchor="middle">10 s</text></svg>
+              <div id="saRingLabel" class="muted small">Delay starts after 3 wrong keys</div>
+            </div>
+          </div>
+        </div>
+        <div class="card sa-pipe">
+          <h2>Seed &rarr; key</h2>
+          <div class="pipeline">
+            <div id="pSeed" class="pbox"><div class="ph">Seed <span>(from ECU)</span></div><div class="pbytes"></div><div class="pfoot muted small"></div></div>
+            <div class="parrow"></div>
+            <div id="pAlgo" class="pbox algo"><div class="ph">Demo algorithm</div><span class="tag model">MODELED &ndash; demo algorithm, not a real OEM algorithm</span>
+              <div class="formula">key = rotl32(seed &oplus; 0x5A5A5A5A, 3)</div><div class="steps"></div></div>
+            <div class="parrow"></div>
+            <div id="pKey" class="pbox"><div class="ph">Key <span>(to ECU)</span></div><div class="pbytes"></div><div class="pfoot muted small"></div></div>
+          </div>
+          <div class="row sa-controls">
+            <button id="saSeed" class="btn">Request seed</button>
+            <button id="saCompute" class="btn ghost">Compute key</button>
+            <button id="saSend" class="btn">Send key</button>
+            <button id="saWrong" class="btn ghost">Send wrong key</button>
+            <button id="saStop" class="btn ghost" title="session_stop: leaving the session locks the ECU again">End session (session_stop)</button>
+          </div>
+        </div>
+      </div>
+      <div class="sa-grid2">
+        <div class="card">
+          <h2>UDS exchanges <span class="muted small">every byte decoded by odxtools and labelled with its ODX parameter</span></h2>
+          <div id="saTimeline" class="sa-timeline"></div>
+        </div>
+        <div class="sa-side">
+          <div class="card sa-protected">
+            <h3>Protected service</h3>
+            <div class="sa-prot-head"><span id="saProtName" class="sa-prot-name">headstand</span><span id="saProtBadge" class="sa-verdict">Blocked</span></div>
+            <div id="saProtRule" class="muted small sa-rule"></div>
+            <button id="saTry" class="btn accent">Try headstand</button>
+            <div id="saProtLast" class="sa-prot-last muted small">Not tried yet.</div>
+          </div>
+          <div class="card">
+            <h2>security_chart <span class="tag real">REAL</span></h2>
+            <div id="saChart"></div>
+            <div class="muted small">Rendered from the ODX STATE-CHART; the highlighted transition is the one odxtools' <code>StateMachine</code> actually executed.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <!-- ================= /Security Access ================= -->
+
   <section id="tab-decode" class="tab">
     <div class="card">
       <h2>Decode a raw UDS telegram</h2>
@@ -130,5 +217,6 @@
 </main>
 <footer>Demo front-end calling the open-source <b>odxtools</b> library (Mercedes-Benz Tech Innovation) directly. Not an official Mercedes-Benz product.</footer>
 <script src="/static/app.js"></script>
+<script src="/static/security.js"></script>
 </body>
 </html>
