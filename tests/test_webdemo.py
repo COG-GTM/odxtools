@@ -176,6 +176,106 @@ class TestWebDemo(unittest.TestCase):
             self.server._live.close()
             self.server._live = None
 
+    def test_dtc_pdx_generator(self) -> None:
+        import tempfile
+
+        import odxtools
+        from odxtools.diagnostictroublecode import DiagnosticTroubleCode
+        sys.path.insert(0, str(WEBDEMO.parent.parent))
+        from examples import mksomersaultdtcpdx, somersaultecu
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "somersault_dtc.pdx"
+            odxtools.write_pdx_file(
+                str(out), mksomersaultdtcpdx.add_fault_memory(somersaultecu.database))
+            db = odxtools.load_pdx_file(str(out))
+        # the upstream example database is not modified
+        self.assertNotIn("read_dtc_by_status_mask", [
+            s.short_name for s in somersaultecu.database.ecus.somersault_lazy.services
+        ])
+        for variant in ("somersault_lazy", "somersault_assiduous"):
+            dl = db.ecus[variant]
+            req = dl.services.read_dtc_by_status_mask(status_mask=0xFF)
+            self.assertEqual(req.hex(), "1902ff")
+            self.assertEqual(
+                dl.services.read_dtc_snapshot(dtc=0x010003, record_number=1).hex(), "190401000301")
+            self.assertEqual(dl.services.clear_dtcs().hex(), "14ffffff")
+            msg = dl.decode_response(bytes.fromhex("5902ff0100020d"), req)[0]
+            dtc = msg.param_dict["dtc_records"][0]["dtc"]  # type: ignore[index]
+            self.assertIsInstance(dtc, DiagnosticTroubleCode)
+            self.assertEqual(dtc.trouble_code, 0x010002)
+            self.assertEqual(dtc.text.text, "Flip aborted – too dizzy")
+
+    def test_fault_memory(self) -> None:
+        dbs = {d["name"]: d for d in self.client.get("/api/databases").json()}
+        self.assertTrue(dbs["somersault_dtc.pdx"]["demo_extension"])
+        self.assertFalse(dbs["somersault.pdx"]["demo_extension"])
+        self.assertEqual(next(iter(dbs)), "somersault.pdx")
+        r = self.client.post(
+            "/api/live/start", json={
+                "db": "somersault_dtc.pdx",
+                "layer": "somersault_assiduous"
+            })
+        self.assertEqual(r.status_code, 200, r.text)
+
+        def send(**body: Any) -> dict[str, Any]:
+            r = self.client.post("/api/live/send", json=body)
+            self.assertEqual(r.status_code, 200, r.text)
+            return r.json()  # type: ignore[no-any-return]
+
+        try:
+            tx = send(raw="19 02 ff")
+            self.assertEqual(tx["service"], "read_dtc_by_status_mask")
+            self.assertEqual(tx["response"]["params"]["dtc_records"], [])
+
+            # overheat the acrobat: 12 forward flips heat it up by 30 °C
+            send(service="session_start", params={"bribe": "1"})
+            for n in ("10", "2"):
+                send(
+                    service="do_forward_flips",
+                    params={
+                        "forward_soberness_check": "0x12",
+                        "num_flips": n
+                    })
+            ecu = self.client.get("/api/live/poll").json()["ecu"]
+            self.assertGreater(ecu["temperature"], ecu["limits"]["temperature"])
+            self.assertEqual([e["kind"] for e in ecu["fault_memory"]["events"]], ["stored"])
+
+            # the fault memory is readable although the ECU is too hot
+            tx = send(service="read_dtc_by_status_mask", params={"status_mask": "0xff"})
+            self.assertEqual(tx["response"]["kind"], "positive")
+            self.assertGreater(tx["frames"], 1)  # multi-frame ISO-TP response
+            records = tx["response"]["params"]["dtc_records"]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["dtc"]["trouble_code"], 0x010001)
+            self.assertEqual(records[0]["dtc"]["text"], "Acrobat overheated")
+            self.assertEqual(records[0]["status"]["test_failed"], 1)
+            self.assertEqual(records[0]["status"]["confirmed_dtc"], 1)
+            paths = [s["path"] for s in tx["response"]["detail_spans"]]
+            self.assertIn("dtc_records[0].dtc", paths)
+
+            tx = send(service="read_dtc_snapshot", params={"dtc": "0x010001", "record_number": "1"})
+            self.assertEqual(tx["response"]["kind"], "positive")
+            snap = tx["response"]["params"]["snapshot"]
+            self.assertGreaterEqual(snap["temperature"], ecu["limits"]["temperature"])
+            self.assertEqual(snap["total_flips"], 12)
+            self.assertEqual(tx["response"]["params"]["dtc"]["text"], "Acrobat overheated")
+
+            # snapshot of a DTC which is not stored
+            tx = send(raw="19 04 01 00 03 01")
+            self.assertEqual(tx["service"], "read_dtc_snapshot")
+            self.assertEqual(tx["response"]["kind"], "negative")
+            self.assertEqual(tx["response"]["nrc"]["name"], "RequestOutOfRange")
+
+            tx = send(service="clear_dtcs")
+            self.assertEqual(tx["response"]["hex"], "54")
+            tx = send(service="read_dtc_by_status_mask", params={"status_mask": "0xff"})
+            self.assertEqual(tx["response"]["params"]["dtc_records"], [])
+        finally:
+            assert self.server._live is not None
+            self.server._live.close()
+            self.server._live = None
+
 
 if __name__ == "__main__":
     unittest.main()

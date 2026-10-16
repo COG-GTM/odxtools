@@ -129,3 +129,106 @@ td.mono,.mono{font-family:var(--mono)}
 footer{color:var(--muted);font-size:11px;text-align:center;padding:24px 40px 40px;border-top:1px solid var(--line);margin-top:8px}
 svg text{font-family:var(--sans)}
 .transitions{margin:8px 0 14px;font-size:12px}.transitions td,.transitions th{padding:5px 6px}.transitions tr.cur td{color:var(--acc-h)}
+
+/* ---------------------------------------------------------------- fault memory */
+.ribbon{font:600 10px/1 var(--sans);letter-spacing:1.2px;text-transform:uppercase;padding:6px 10px;border:1px solid var(--text);color:var(--text);white-space:nowrap;align-self:flex-start}
+.ribbon.dark{border-color:#fff;color:#fff}
+.ribbon[hidden]{display:none}
+.fm-headrow{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}
+.fm-title{font:400 32px/1.15 var(--serif);margin:0 0 6px}
+.fm-lede{margin:0;color:var(--text2);max-width:980px}
+.fm-controls{margin-top:18px}
+.fm-btnhex{font-size:11px;opacity:.75;margin-left:8px}
+.fm-provoke{position:relative}
+.fm-menu{position:absolute;z-index:20;top:calc(100% + 4px);left:0;width:360px;background:#fff;border:1px solid var(--text);display:flex;flex-direction:column}
+.fm-menu[hidden]{display:none}
+.fm-menu button{all:unset;cursor:pointer;padding:12px 14px;border-bottom:1px solid var(--line2);display:block}
+.fm-menu button:last-child{border-bottom:0}
+.fm-menu button:hover,.fm-menu button:focus-visible{background:var(--acc-bg)}
+.fm-menu button[disabled]{cursor:default;opacity:.45;background:none}
+.fm-menu b{display:block;color:var(--text);font-weight:600;font-size:13px}
+.fm-menu span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.fm-progress{min-height:20px;font-size:12px;color:var(--text2);margin-top:6px;transition:opacity .2s}
+.fm-progress:empty{opacity:0}
+.fm-unsupported{border-left:3px solid var(--text)}
+.fm-unsupported h3{margin-top:0}
+.fm-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:24px;align-items:start}
+@media (max-width:1180px){.fm-grid{grid-template-columns:1fr}}
+/* timeline */
+.fm-timeline{position:relative}
+.fm-lane{display:grid;grid-template-columns:230px 1fr;align-items:center;min-height:34px;border-bottom:1px solid var(--line2)}
+.fm-lane:last-of-type{border-bottom:1px solid var(--text)}
+.fm-lane .who{font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:12px}
+.fm-lane .who b{font-family:var(--mono);color:var(--text);font-weight:600;margin-right:8px}
+.fm-track{position:relative;height:34px}
+.fm-mark{position:absolute;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;background:var(--text);border:1px solid var(--text);cursor:default;transition:left .25s ease;animation:fmDrop .25s ease-out}
+.fm-mark.passed{background:#fff}
+.fm-mark.cleared{width:2px;height:26px;margin:-13px 0 0 -1px;background:var(--acc);border-color:var(--acc)}
+.fm-mark:hover,.fm-mark:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.fm-tip{position:absolute;z-index:10;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);background:#000;color:#fff;font:12px/1.4 var(--sans);padding:8px 10px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s}
+.fm-mark:hover .fm-tip,.fm-mark:focus-visible .fm-tip{opacity:1}
+.fm-tip b{font-family:var(--mono)}
+.fm-axis{display:grid;grid-template-columns:230px 1fr}
+.fm-axis .ticks{position:relative;height:22px}
+.fm-axis .ticks span{position:absolute;top:4px;transform:translateX(-50%);font:11px var(--mono);color:var(--muted)}
+.fm-now{position:absolute;top:0;bottom:0;width:1px;background:var(--line);transition:left .25s linear}
+@keyframes fmDrop{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+/* cards */
+.fm-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px}
+.fm-card{all:unset;box-sizing:border-box;display:block;cursor:pointer;border:1px solid var(--line);border-top:3px solid var(--text);padding:16px 18px;background:#fff;transition:border-color .2s,opacity .25s,transform .25s;animation:fmSlide .26s ease-out}
+.fm-card:hover,.fm-card:focus-visible{border-color:var(--acc);border-top-color:var(--acc)}
+.fm-card.open{border-color:var(--acc);border-top-color:var(--acc);background:var(--acc-bg)}
+.fm-card.leave{opacity:0;transform:translateX(24px)}
+.fm-card .code{font:400 34px/1 var(--serif);color:var(--text);letter-spacing:.5px}
+.fm-card .code small{font:12px var(--mono);color:var(--muted);margin-left:8px;letter-spacing:0}
+.fm-card .text{font-size:15px;color:var(--text);margin:8px 0 4px;min-height:22px}
+.fm-card .meta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:10px}
+.fm-card .meta b{color:var(--text);font-weight:600}
+.fm-bits{display:grid;grid-template-columns:repeat(8,1fr);gap:3px}
+.fm-bit{font:600 10px/1 var(--mono);text-align:center;padding:6px 0;border:1px solid var(--line);color:#a0a0a0;background:#fff;transition:background-color .25s,color .25s,border-color .25s}
+.fm-bit.on{background:#000;border-color:#000;color:#fff}
+.fm-bit i{display:block;font-style:normal;font-weight:400;font-size:9px;margin-top:3px;opacity:.8}
+@keyframes fmSlide{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.fm-empty{border:1px dashed #bbb;padding:34px 24px;text-align:center;color:var(--muted);animation:fmFade .25s ease-out}
+.fm-empty .line{width:120px;height:1px;background:#bbb;margin:0 auto 16px}
+.fm-empty b{display:block;font:400 22px/1.2 var(--serif);color:var(--text);margin-bottom:6px}
+.fm-empty.cleared .line{background:var(--acc);width:180px}
+@keyframes fmFade{from{opacity:0}to{opacity:1}}
+/* drawer */
+.fm-drawer{overflow:hidden;max-height:0;opacity:0;transition:max-height .3s ease,opacity .25s ease,margin .25s}
+.fm-drawer.open{max-height:900px;opacity:1;margin-top:18px}
+.fm-drawer .inner{border:1px solid var(--line);border-left:3px solid var(--acc);padding:18px 20px}
+.fm-drawer .hd{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.fm-drawer h3{margin:0 0 4px}
+.fm-snapgrid{display:grid;grid-template-columns:1fr 1fr;gap:18px 28px;margin-top:6px}
+.fm-snapgrid .gauge{margin:6px 0}
+.fm-figs{display:flex;gap:28px;margin-top:6px}
+.fm-figs div{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.fm-figs b{display:block;font:400 26px/1.1 var(--serif);color:var(--text);letter-spacing:0;text-transform:none;margin-top:4px}
+/* exchanges */
+.fm-exchanges{display:flex;flex-direction:column;gap:12px}
+.fm-quiet{color:var(--muted);font-size:13px;padding:8px 0}
+.fm-ex{border:1px solid var(--line);border-left:3px solid var(--line);padding:12px 14px;background:#fff;animation:fmSlide .22s ease-out;transition:border-color .25s}
+.fm-ex.pos{border-left-color:var(--ok)}.fm-ex.neg{border-left-color:var(--bad)}
+.fm-ex .hd{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.fm-ex .hd b{font-size:14px;color:var(--text)}
+.fm-ex .dir{display:grid;grid-template-columns:44px 1fr;align-items:start;gap:8px;margin-top:8px}
+.fm-ex .dir>.badge{margin-top:16px;text-align:center}
+.fm-ex .bytes{margin:6px 0 0}
+.fm-ex .byte{min-width:40px;font-size:13px;padding:6px 3px 4px}
+.fm-ex .byte small{max-width:96px}
+.fm-wait{font-size:12px;color:var(--muted);padding:14px 0 6px}
+.fm-wait:after{content:"";display:inline-block;width:24px;height:1px;background:var(--muted);margin-left:8px;vertical-align:middle;animation:fmPulse 1s ease-in-out infinite alternate}
+@keyframes fmPulse{from{opacity:.2}to{opacity:1}}
+.fm-in .byte{animation:fmByte .2s ease-out backwards}
+@keyframes fmByte{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.fm-nrc{border:1px solid var(--bad);padding:12px 14px;margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:16px;animation:fmFade .2s ease-out}
+.fm-nrc b{display:block;color:var(--bad);font-weight:600}
+.fm-nrc span{font-size:12px;color:var(--text2)}
+.fm-nrc .hex{font:400 26px/1 var(--serif);color:var(--bad)}
+@media (prefers-reduced-motion:reduce){
+  .fm-mark,.fm-card,.fm-empty,.fm-ex,.fm-in .byte,.fm-nrc{animation:none!important}
+  .fm-mark,.fm-card,.fm-bit,.fm-drawer,.fm-now,.fm-progress,.fm-tip,.fm-ex{transition:none!important}
+  .fm-wait:after{animation:none}
+}
+.fm-cards .fm-empty{grid-column:1/-1}

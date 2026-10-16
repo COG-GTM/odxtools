@@ -746,6 +746,10 @@ and then opening `http://localhost:8000`. It offers:
   passive sniffer reassembles the CAN frames using
   `IsoTpStateMachine`. The physical behavior of the ECU (dizziness,
   temperature) is modeled for demonstration purposes.
+- **Fault memory:** with the demo-only `somersault_dtc.pdx` (generated
+  by `examples/mksomersaultdtcpdx.py`), modeled faults store DTCs that
+  are read with UDS `0x19`, decoded through an ODX `DTC-DOP` and
+  cleared with `0x14`. See `examples/webdemo/README.md`.
 - **Decoder:** decodes arbitrary request/response telegrams against
   any diagnostic layer.
 - **Compare:** visualizes the result of the `compare` tool's

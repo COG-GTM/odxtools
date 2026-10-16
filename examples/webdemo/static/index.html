@@ -21,6 +21,7 @@
     <label>Database</label>
     <select id="dbSelect"></select>
     <label class="btn ghost" title="Load your own .pdx file">Upload PDX<input id="upload" type="file" accept=".pdx" hidden></label>
+    <span id="dbRibbon" class="ribbon dark" hidden>Demo PDX extension</span>
     <span id="loadInfo" class="muted"></span>
   </div>
 </header>
@@ -28,6 +29,7 @@
   <button data-tab="overview" class="active">Overview</button>
   <button data-tab="services">Service Inspector</button>
   <button data-tab="live">Live Virtual ECU</button>
+  <button data-tab="faults">Fault Memory</button>
   <button data-tab="decode">Decoder</button>
   <button data-tab="compare">Compare</button>
 </nav>
@@ -97,6 +99,46 @@
     <div class="card">
       <h2>CAN bus trace <span id="frameRate" class="muted small"></span></h2>
       <div class="tracewrap"><table id="trace"><thead><tr><th>#</th><th>t [ms]</th><th>CAN ID</th><th>Node</th><th>ISO-TP</th><th>Data</th><th>Reassembled telegram</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-faults" class="tab">
+    <div class="card fm-head">
+      <div class="fm-headrow">
+        <div>
+          <h2 class="fm-title">Fault memory</h2>
+          <p class="fm-lede">Modeled faults in the virtual Somersault ECU store diagnostic trouble codes. The tester reads them with UDS <code>0x19</code>, odxtools decodes them through the ODX <code>DTC-DOP</code>, and <code>0x14</code> clears them, all over the virtual CAN / ISO-TP link.</p>
+        </div>
+        <span id="fmRibbon" class="ribbon" hidden title="">Demo PDX extension</span>
+      </div>
+      <div class="row fm-controls">
+        <button id="fmRead" class="btn">Read DTCs <span id="fmMask" class="mono fm-btnhex">19 02 FF</span></button>
+        <button id="fmClear" class="btn ghost">Clear DTCs <span class="mono fm-btnhex">14 FF FF FF</span></button>
+        <div class="fm-provoke">
+          <button id="fmProvoke" class="btn accent" aria-haspopup="true" aria-expanded="false">Provoke fault &#9662;</button>
+          <div id="fmMenu" class="fm-menu" role="menu" hidden></div>
+        </div>
+        <span id="fmConn" class="muted small"></span>
+      </div>
+      <div id="fmProgress" class="fm-progress" aria-live="polite"></div>
+      <div class="honesty"><span class="tag real">REAL</span> odxtools decode of the DTC-DOP · ODX state chart · CAN / ISO-TP (python-can virtual bus, can-isotp)
+        &nbsp;&nbsp;<span class="tag model">MODELED</span> ECU physics that trip the faults · the demo fault-memory algorithm (status bits, snapshot, occurrence counter)</div>
+    </div>
+    <div id="fmUnsupported" class="card fm-unsupported" hidden></div>
+    <div class="card">
+      <h2>Fault timeline <span class="muted small">seconds since connect · markers come from the modeled ECU's fault log</span> <span class="tag model">MODELED</span></h2>
+      <div id="fmTimeline" class="fm-timeline"></div>
+    </div>
+    <div class="fm-grid">
+      <div class="card">
+        <h2>Stored DTCs <span id="fmCount" class="muted small"></span> <span class="tag real">REAL</span> <span class="muted small">decoded from <code>59 02</code> by odxtools</span></h2>
+        <div id="fmCards" class="fm-cards"></div>
+        <div id="fmDrawer" class="fm-drawer" aria-live="polite"></div>
+      </div>
+      <div class="card">
+        <h2>UDS exchanges <span class="muted small">request above, response below · bytes coloured by ODX parameter</span></h2>
+        <div id="fmExchanges" class="fm-exchanges"><div class="fm-quiet">Read, snapshot and clear requests appear here as they cross the bus.</div></div>
+      </div>
     </div>
   </section>
 
