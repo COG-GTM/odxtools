@@ -27,8 +27,13 @@ def _nrc(sid: int, code: uds.NegativeResponseCodes) -> bytes:
 
 # ISO 14229-1 DTC status bits used by the fault memory model
 TEST_FAILED = 0x01
+TEST_FAILED_THIS_OPERATION_CYCLE = 0x02
 PENDING_DTC = 0x04
 CONFIRMED_DTC = 0x08
+TEST_FAILED_SINCE_LAST_CLEAR = 0x20
+FAILED = (
+    TEST_FAILED | TEST_FAILED_THIS_OPERATION_CYCLE | PENDING_DTC | CONFIRMED_DTC
+    | TEST_FAILED_SINCE_LAST_CLEAR)
 STATUS_AVAILABILITY_MASK = 0xFF
 
 
@@ -67,6 +72,7 @@ class SomersaultBehavior:
         #: trouble code -> {"status", "snapshot", "occurrences"}
         self.fault_memory: dict[int, dict[str, Any]] = {}
         self.fault_events: list[dict[str, Any]] = []
+        self._event_ids = 0
 
     def tick(self) -> None:
         now = time.monotonic()
@@ -74,8 +80,13 @@ class SomersaultBehavior:
         self._t = now
         self.dizziness = max(0.0, self.dizziness - 3.0 * dt)
         self.temperature = max(36.0, self.temperature - 0.5 * dt)
-        # monitors: testFailed is reset once the fault condition is gone
-        if self._overheated and self.temperature <= self.HOT_LIMIT:
+        # monitors: testFailed is reset once the fault condition is gone,
+        # and a condition which is still present after a clear is stored again
+        if not self._overheated and self.temperature > self.HOT_LIMIT:
+            self._overheated = True
+            self._store_fault("acrobat_overheated",
+                              f"temperature {self.temperature:.0f} °C > {self.HOT_LIMIT} °C limit")
+        elif self._overheated and self.temperature <= self.HOT_LIMIT:
             self._overheated = False
             self._heal("acrobat_overheated")
         if self.dizziness < self.DIZZY_LIMIT:
@@ -103,7 +114,7 @@ class SomersaultBehavior:
         if entry is None:
             # the snapshot record is frozen at the first occurrence
             entry = self.fault_memory[code] = {
-                "status": TEST_FAILED | PENDING_DTC | CONFIRMED_DTC,
+                "status": FAILED,
                 "occurrences": 0,
                 "snapshot": {
                     "temperature": int(round(min(255.0, self.temperature))),
@@ -112,9 +123,11 @@ class SomersaultBehavior:
                     "timestamp": min(0xFFFF, int(self._seconds())),
                 },
             }
-        entry["status"] |= TEST_FAILED | PENDING_DTC | CONFIRMED_DTC
+        entry["status"] |= FAILED
         entry["occurrences"] += 1
+        self._event_ids += 1
         self.fault_events.append({
+            "id": self._event_ids,
             "kind": "stored" if entry["occurrences"] == 1 else "updated",
             "t": round(self._seconds(), 2),
             "trouble_code": code,
@@ -206,6 +219,9 @@ class SomersaultBehavior:
 
     def _on_session_start(self, service: Any, raw_req: bytes, params: dict[str, Any]) -> bytes:
         bribe = int(params.get("bribe", 0))
+        # a new session starts a new (modeled) operation cycle
+        for entry in self.fault_memory.values():
+            entry["status"] &= ~TEST_FAILED_THIS_OPERATION_CYCLE
         self.session_active = True
         self.happiness = min(255.0, self.happiness + 25 * bribe)
         return self._pos(
@@ -363,7 +379,16 @@ class SomersaultBehavior:
 
     def _on_clear_dtcs(self, service: Any, raw_req: bytes, params: dict[str, Any]) -> bytes:
         self.fault_memory.clear()
-        self.fault_events.append({"kind": "cleared", "t": round(self._seconds(), 2)})
+        self._event_ids += 1
+        self.fault_events.append({
+            "id": self._event_ids,
+            "kind": "cleared",
+            "t": round(self._seconds(), 2)
+        })
+        del self.fault_events[:-100]
+        # re-evaluate the monitors: faults which are still present are stored again
+        self._overheated = False
+        self.tick()
         return self._pos(service, raw_req)
 
 

@@ -262,14 +262,28 @@ class TestWebDemo(unittest.TestCase):
             tx = send(service="read_dtc_snapshot", params={"dtc": "0x010002", "record_number": "1"})
             self.assertEqual(tx["response"]["nrc"]["code"], 0x31)
 
+            # failure-history masks (testFailedSinceLastClear) match, too
+            tx = send(raw="19 02 20")
+            self.assertEqual(len(tx["response"]["params"]["dtc_records"]), 1)
+
+            # a fault which is still present is stored again after a clear
             tx = send(service="clear_dtcs")
             self.assertEqual(tx["request"]["hex"], "14ffffff")
             self.assertEqual(tx["response"]["hex"], "54")
+            self.assertEqual([r["dtc"]["trouble_code"] for r in read()], [0x010001])
+
+            # once the acrobat has cooled down, clearing empties the fault memory
+            session = self.client.get("/api/live/poll").json()["session"]
+            self.assertEqual(
+                self.client.post(f"/api/live/recover?session={session}").status_code, 200)
+            send(service="clear_dtcs")
             self.assertEqual(read(), [])
 
             ecu = self.client.get("/api/live/poll").json()["ecu"]
             self.assertEqual(ecu["fault_memory"], [])
-            self.assertEqual([e["kind"] for e in ecu["fault_events"]], ["stored", "cleared"])
+            self.assertEqual([e["kind"] for e in ecu["fault_events"]],
+                             ["stored", "cleared", "stored", "cleared"])
+            self.assertEqual(len({e["id"] for e in ecu["fault_events"]}), 4)
         finally:
             assert self.server._live is not None
             self.server._live.close()

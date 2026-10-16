@@ -467,7 +467,7 @@ const FM_TRIGGERS = [
   {key: "overheat", label: "Overheat", sub: "single forward flips until the ECU answers too_hot", needs: ["do_forward_flips"]},
   {key: "dizzy", label: "Flip while dizzy", sub: "ten backward flips; the 10th is rejected for dizziness", needs: ["do_backward_flips"]},
   {key: "fire", label: "Fire-ring flip", sub: "fire ring on, then a flip that fails its soberness check", needs: ["set_operation_params", "do_forward_flips"]}];
-S.fm = {read: false, records: [], ecu: null, sel: null, busy: false, events: 0, gen: 0};
+S.fm = {read: false, records: [], ecu: null, sel: null, busy: false, gen: 0};
 const fmHex = c => "0x" + Number(c).toString(16).toUpperCase().padStart(6, "0");
 const fmLayer = () => liveLayerSummary();
 const fmHas = n => !!fmLayer()?.services.some(s => s.name === n);
@@ -486,7 +486,7 @@ function fmOnDb() {
   fmSyncLayer(); fmOnSession(null);
 }
 function fmOnSession(st) {
-  S.fm.gen++; S.fm.read = false; S.fm.records = []; S.fm.sel = null; S.fm.events = 0;
+  S.fm.gen++; S.fm.read = false; S.fm.records = []; S.fm.sel = null;
   $("#fmCards").innerHTML = ""; $("#fmDrawer").hidden = true; $("#fmDrawer").innerHTML = "";
   $("#fmTx").innerHTML = `<div class="fm-note muted">Read, snapshot and clear requests appear here once their CAN frames have arrived.</div>`;
   $("#fmTimeline .fm-marks").innerHTML = ""; $("#fmTimeline .fm-ticks").innerHTML = "";
@@ -529,16 +529,16 @@ function fmOnPoll(ecu) {
 function fmRenderTimeline(ecu) {
   const tl = $("#fmTimeline"), marks = $(".fm-marks", tl), ticks = $(".fm-ticks", tl);
   const events = ecu?.fault_events || [];
-  if (events.length < S.fm.events) marks.innerHTML = "";
-  S.fm.events = events.length;
   const span = Math.max(30, Math.ceil(((ecu?.uptime_s || 0) + 5) / 15) * 15);
   const pos = t => `${Math.min(100, t / span * 100)}%`;
-  const els = $$(".fm-mark", marks);
-  events.forEach((ev, i) => {
-    let m = els[i];
+  // markers are reconciled by the ECU's stable event id
+  const ids = new Set(events.map(ev => String(ev.id)));
+  $$(".fm-mark", marks).forEach(m => { if (!ids.has(m.dataset.id)) m.remove(); });
+  events.forEach(ev => {
+    let m = $(`.fm-mark[data-id="${CSS.escape(String(ev.id))}"]`, marks);
     if (!m) {
       m = document.createElement("div");
-      m.className = "fm-mark " + ev.kind;
+      m.className = "fm-mark " + ev.kind; m.dataset.id = ev.id;
       m.innerHTML = ev.kind === "cleared" ? `<div class="tip"><b>Fault memory cleared</b>0x14 ClearDiagnosticInformation at t = ${esc(ev.t.toFixed(1))} s</div>`
         : `<span class="code">${esc(fmHex(ev.trouble_code))}</span><div class="tip"><b>${esc(fmHex(ev.trouble_code))} · ${esc(ev.text)}</b>${esc(ev.kind === "stored" ? "Stored" : "Updated, occurrence " + ev.occurrences)} at t = ${esc(ev.t.toFixed(1))} s<br>Trigger: ${esc(ev.trigger)}</div>`;
       m.setAttribute("aria-label", ev.kind === "cleared" ? "fault memory cleared" : `${fmHex(ev.trouble_code)} ${ev.text}: ${ev.trigger}`);
@@ -626,12 +626,14 @@ function fmPair(tx, label) {
   box.prepend(el);
   while (box.children.length > 30) box.lastChild.remove();
 }
+// Resolves to null when the live session changed while the request was in flight.
 async function fmSend(body, label) {
+  if (!S.live) await connectLive();
   const gen = S.fm.gen;
-  if (!S.live) { await connectLive(); }
   const tx = await sendLive(body);
-  if (label && (gen === S.fm.gen || S.fm.gen === gen + 1)) fmPair(tx, label);
-  return tx;
+  if (gen !== S.fm.gen) return null;
+  if (label) fmPair(tx, label);
+  return {tx};
 }
 async function fmBusy(fn) {
   if (S.fm.busy) return; S.fm.busy = true;
@@ -640,14 +642,18 @@ async function fmBusy(fn) {
 }
 
 async function fmRead() {
-  const tx = await fmSend({service: "read_dtc_by_status_mask", params: {status_mask: FM_STATUS_MASK}}, "Read DTCs · 0x19 02");
+  const res = await fmSend({service: "read_dtc_by_status_mask", params: {status_mask: FM_STATUS_MASK}}, "Read DTCs · 0x19 02");
+  if (!res) return;
+  const {tx} = res;
   if (tx?.response?.kind === "positive") {
     S.fm.read = true; S.fm.records = tx.response.params.dtc_records || []; fmRenderCards();
   } else fmRenderCards(fmNrcHtml(tx));
 }
 $("#fmRead").onclick = () => fmBusy(fmRead);
 $("#fmClear").onclick = () => fmBusy(async () => {
-  const tx = await fmSend({service: "clear_dtcs"}, "Clear DTCs · 0x14");
+  const res = await fmSend({service: "clear_dtcs"}, "Clear DTCs · 0x14");
+  if (!res) return;
+  const {tx} = res;
   if (tx?.response?.kind === "positive") { S.fm.read = true; S.fm.records = []; fmRenderCards(); }
   else fmRenderCards(fmNrcHtml(tx));
 });
@@ -657,8 +663,9 @@ async function fmSnapshot(code) {
   if (S.fm.busy) return;
   S.fm.sel = code; $$("#fmCards .fm-card").forEach(c => c.classList.toggle("sel", +c.dataset.code === code));
   await fmBusy(async () => {
-    const tx = await fmSend({service: "read_dtc_snapshot", params: {dtc: String(code), record_number: "1"}}, `Snapshot ${fmHex(code)} · 0x19 04`);
-    if (S.fm.sel !== code) return;
+    const res = await fmSend({service: "read_dtc_snapshot", params: {dtc: String(code), record_number: "1"}}, `Snapshot ${fmHex(code)} · 0x19 04`);
+    if (!res || S.fm.sel !== code) return;
+    const {tx} = res;
     const d = $("#fmDrawer"); d.hidden = false;
     const r = tx?.response;
     if (r?.kind !== "positive") { d.innerHTML = `<div class="hd"><h3>Snapshot record 0x01 · ${esc(fmHex(code))}</h3><button class="close">Close</button></div>${fmNrcHtml(tx)}`; }
