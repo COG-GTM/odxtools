@@ -279,8 +279,9 @@ async function loadLiveSvcForm() {
 }
 $("#liveStart").onclick = connectLive;
 $("#liveReset").onclick = async () => {
+  if (!S.live) return;
   S.gen = (S.gen || 0) + 1;
-  const st = await api("/api/live/reset", {method: "POST"});
+  let st; try { st = await api(`/api/live/reset?session=${S.live.session}`, {method: "POST"}); } catch { poll(); return; }
   if (!S.live || st.session !== S.live.session) return;
   S.gen++; S.after = Math.max(S.after, st.seq); S.live.charts = null; S.lastTrans = null; poll();
 };
@@ -301,7 +302,7 @@ function adoptSession(st) {
   if (st.chart && [...$("#liveChart").options].some(o => o.value === st.chart)) $("#liveChart").value = st.chart;
   $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
   $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
-  $("#liveStart").textContent = "Reconnect";
+  $("#liveStart").textContent = "Reconnect"; $("#liveReset").disabled = false;
   drawChart();
 }
 
@@ -322,7 +323,9 @@ async function poll() {
     if (st.db === S.db && st.layer === $("#liveLayer").value) { adoptSession(st); return poll(); }
     S.gen++; S.live = null; S.lastTrans = null;
     $("#liveIds").innerHTML = `<span class="pill off">Disconnected</span> Another client replaced the live session (${esc(st.db)} / ${esc(st.layer)}). Connect or send to start a session for the selected ECU.`;
-    $("#liveStart").textContent = "Connect"; drawChart();
+    $("#liveStart").textContent = "Connect"; $("#liveReset").disabled = true;
+    $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = ""; $("#gauges").innerHTML = ""; $("#frameRate").textContent = "";
+    drawChart();
     return;
   }
   const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;

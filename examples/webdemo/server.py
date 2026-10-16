@@ -771,9 +771,11 @@ def live_chart(body: ChartBody) -> dict[str, Any]:
 
 
 @app.post("/api/live/reset")
-def live_reset() -> dict[str, Any]:
+def live_reset(session: int | None = None) -> dict[str, Any]:
     with _live_lock:
         live = _require_live()
+        if session is not None and session != live.session_id:
+            raise HTTPException(409, "live session was replaced by another client")
         live.behavior.reset()
         for fsm in live.fsms.values():
             fsm.active_state = fsm.state_chart.start_state
