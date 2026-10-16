@@ -3,16 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ODX Diagnostic Workbench · odxtools</title>
+<title>Diagnostic Workbench | Mercedes-Benz</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header>
   <div class="brand">
-    <div class="logo">ODX</div>
+    <svg class="star" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="none" stroke="#fff" stroke-width="3.2"/><polygon fill="#fff" points="50,6 54.7,47.3 88.1,72 50,57.2 11.9,72 45.3,47.3"/></svg>
+    <span class="wordmark">Mercedes-Benz</span>
+    <span class="divider"></span>
     <div>
       <h1>Diagnostic Workbench</h1>
-      <div class="sub">powered by <b>odxtools</b> · ISO 22901 ODX/PDX · UDS · ISO-TP</div>
+      <div class="sub">ODX / PDX (ISO 22901) &middot; UDS &middot; ISO-TP &middot; powered by odxtools</div>
     </div>
   </div>
   <div class="dbbar">
@@ -36,7 +38,7 @@
       <div class="card"><h2>Diagnostic layer inheritance</h2><div id="inherit"></div></div>
       <div class="card"><h2>Communication parameters</h2><div id="comparams"></div><h2 style="margin-top:18px">Document revisions</h2><div id="revisions"></div></div>
     </div>
-    <div class="card"><h2>Service availability per layer <span class="muted small">● defined here · ○ inherited · ✕ NOT-INHERITED · – absent</span></h2><div id="matrix"></div></div>
+    <div class="card"><h2>Service availability per layer <span class="muted small">&#9679; defined in layer &nbsp; &#9675; inherited &nbsp; &#10005; NOT-INHERITED &nbsp; &ndash; absent</span></h2><div id="matrix"></div></div>
   </section>
 
   <section id="tab-services" class="tab">
@@ -63,7 +65,7 @@
         <label>State chart</label><select id="liveChart"></select>
         <button id="liveStart" class="btn">Connect</button>
         <button id="liveReset" class="btn ghost">Reset ECU</button>
-        <button id="liveScenario" class="btn accent">▶ Run demo scenario</button>
+        <button id="liveScenario" class="btn accent">Run demo scenario</button>
         <span id="liveIds" class="muted"></span>
       </div>
       <div class="honesty"><span class="tag real">REAL</span> odxtools encode/decode · odxtools <code>StateMachine</code> · odxtools <code>IsoTpStateMachine</code> bus snooper · python-can virtual bus · can-isotp stacks
@@ -126,7 +128,7 @@
     <div id="cmpOut"></div>
   </section>
 </main>
-<footer>odxtools by Mercedes-Benz Tech Innovation / MBition · this UI is a demo front-end calling the library directly</footer>
+<footer>Demo front-end calling the open-source <b>odxtools</b> library (Mercedes-Benz Tech Innovation) directly. Not an official Mercedes-Benz product.</footer>
 <script src="/static/app.js"></script>
 </body>
 </html>

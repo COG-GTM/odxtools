@@ -3,7 +3,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const hex2 = n => "0x" + Number(n).toString(16).toUpperCase().padStart(3, "0");
-const PALETTE = ["#0e7490", "#7c3aed", "#b45309", "#15803d", "#be185d", "#1d4ed8", "#a16207", "#4d7c0f", "#9333ea", "#0f766e"];
+const PALETTE = ["#0078d6", "#1c1c1c", "#5c7f99", "#00406f", "#6e6e6e", "#3a8fd9", "#2f4a5c", "#8a8a8a", "#004f8f", "#454545"];
 
 async function api(path, opts = {}) {
   const r = await fetch(path, {headers: {"Content-Type": "application/json"}, ...opts,
@@ -39,7 +39,7 @@ $("#upload").onchange = async e => {
   $("#loadInfo").textContent = "loading " + f.name + "…";
   try { const r = await fetch("/api/upload", {method: "POST", body: fd}); const j = await r.json();
     if (!r.ok) throw new Error(j.detail); await loadDatabases(j.name); }
-  catch (err) { $("#loadInfo").textContent = "✕ " + err.message; }
+  catch (err) { $("#loadInfo").textContent = err.message; }
 };
 
 async function openDb(name) {
@@ -83,19 +83,18 @@ function renderOverview() {
     const n = byCol[c].length, y = H / 2 + (i - (n - 1) / 2) * (boxH + gap);
     pos[l.name] = {x: ci * colW + (colW - boxW) / 2, y: y - boxH / 2, l};
   }));
-  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#5b6b8c"/></marker>
-    <linearGradient id="gb" x1="0" x2="1"><stop offset="0" stop-color="#00adef33"/><stop offset="1" stop-color="#7c5cff33"/></linearGradient></defs>`;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9a9a9a"/></marker></defs>`;
   for (const l of L) for (const p of l.parents) {
     const a = pos[p], b = pos[l.name]; if (!a || !b) continue;
     const x1 = a.x + boxW, y1 = a.y + boxH / 2, x2 = b.x, y2 = b.y + boxH / 2, mx = (x1 + x2) / 2;
-    svg += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2 - 2},${y2}" stroke="#5b6b8c" fill="none" stroke-width="1.5" marker-end="url(#ar)"/>`;
-    l.not_inherited.forEach((n, k) => svg += `<text x="${b.x + 10}" y="${b.y + boxH + 14 + 13 * k}" fill="#f87171" font-size="10.5">✕ ${esc(n)} <tspan fill="#7f8ba3">not inherited</tspan></text>`);
+    svg += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2 - 2},${y2}" stroke="#9a9a9a" fill="none" stroke-width="1.2" marker-end="url(#ar)"/>`;
+    l.not_inherited.forEach((n, k) => svg += `<text x="${b.x + 10}" y="${b.y + boxH + 14 + 13 * k}" fill="#d92121" font-size="10.5">&#10005; ${esc(n)} <tspan fill="#767676">not inherited</tspan></text>`);
   }
   for (const {x, y, l} of Object.values(pos)) {
-    svg += `<g><rect x="${x}" y="${y}" width="${boxW}" height="${boxH}" rx="10" fill="url(#gb)" stroke="${l.variant_type === "ECU-VARIANT" ? "#00adef" : "#3a4a6b"}"/>
-      <text x="${x + 10}" y="${y + 18}" fill="#7f8ba3" font-size="9.5" letter-spacing=".6">${esc(l.variant_type)}</text>
-      <text x="${x + 10}" y="${y + 35}" fill="#fff" font-size="12.5" font-weight="600">${esc(l.name)}</text>
-      <text x="${x + 10}" y="${y + 50}" fill="#9fd8ff" font-size="10">${l.services.length} services · ${l.dops} DOPs</text></g>`;
+    svg += `<g><rect x="${x}" y="${y}" width="${boxW}" height="${boxH}" fill="#fff" stroke="${l.variant_type === "ECU-VARIANT" ? "#000" : "#bdbdbd"}" stroke-width="${l.variant_type === "ECU-VARIANT" ? 1.4 : 1}"/>
+      <text x="${x + 10}" y="${y + 18}" fill="#767676" font-size="9" letter-spacing="1.2">${esc(l.variant_type)}</text>
+      <text x="${x + 10}" y="${y + 35}" fill="#000" font-size="12.5" font-weight="600">${esc(l.name)}</text>
+      <text x="${x + 10}" y="${y + 50}" fill="#767676" font-size="10">${l.services.length} services · ${l.dops} DOPs</text></g>`;
   }
   $("#inherit").innerHTML = svg + "</svg>";
 
@@ -142,7 +141,7 @@ async function selectService(name) {
   const d = await api(`/api/db/${encodeURIComponent(db)}/layer/${layer.name}/service/${name}`);
   if (S.db !== db || S.layer !== layer || !$(`#svcList .svc.active[data-s="${CSS.escape(name)}"]`)) return;
   S.detail = d;
-  $("#svcHeader").innerHTML = `<div class="row" style="margin:0"><h2 style="margin:0;font-size:18px;text-transform:none;color:#fff">${esc(d.name)}</h2>
+  $("#svcHeader").innerHTML = `<div class="row" style="margin:0"><h2 class="svc-title">${esc(d.name)}</h2>
     <span class="badge">${esc(d.semantic || "")}</span>${d.preconditions.length ? `<span class="badge gnr">pre-conditions: ${esc(d.preconditions.join(", "))}</span>` : ""}</div>
     ${d.description || d.long_name ? `<div class="muted" style="margin-top:6px">${esc(d.description || d.long_name)}</div>` : ""}`;
   buildForm($("#encForm"), d.request, () => encodeNow());
@@ -182,7 +181,7 @@ function encodeNow() {
       const r = await api(`/api/db/${encodeURIComponent(S.db)}/encode`, {method: "POST", body: {layer: S.layer.name, service: detail.name, params: formValues($("#encForm"))}});
       if (S.detail !== detail) return;
       $("#encOut").innerHTML = bytesHtml(r) + paramsKv(r.params) + `<div class="muted small" style="margin-top:6px">Round-trip: encoded by odxtools, then re-decoded with <code>DiagLayer.decode()</code> → identified as <b>${esc(r.coding_object)}</b></div>`;
-    } catch (e) { $("#encOut").innerHTML = `<div class="err">✕ ${esc(e.message)}</div>`; }
+    } catch (e) { $("#encOut").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   }, 120);
 }
 
@@ -191,7 +190,7 @@ function bytesHtml(msg) {
   const colors = {}; (msg.spans || []).forEach((s, i) => colors[s.param] = PALETTE[i % PALETTE.length]);
   const owner = bytes.map((_, i) => (msg.spans || []).find(s => i >= s.start && i < s.start + s.length));
   return `<div class="bytes">${bytes.map((b, i) => {
-    const o = owner[i], c = o ? colors[o.param] : "#1d2840";
+    const o = owner[i], c = o ? colors[o.param] : "#9a9a9a";
     return `<div class="byte" style="background:${c}" title="byte ${i}${o ? " · " + esc(o.param) : ""}">${b.toUpperCase()}<small>${o && o.start === i ? esc(o.param) : "&nbsp;"}</small></div>`;
   }).join("")}</div>`;
 }
@@ -211,7 +210,7 @@ function layoutHtml(o, cls) {
     let val = p.coded_value != null ? `<span class="mono">${esc(Array.isArray(p.coded_value) ? p.coded_value.join(" | ") : "0x" + Number(p.coded_value).toString(16))}</span>` : "";
     if (d.texttable) val = d.texttable.map(t => `<span class="mono">${esc(t.internal)}→"${esc(t.physical)}"</span>`).join(" ");
     if (p.table) val = `table <b>${esc(p.table.name)}</b>: ${p.table.rows.map(esc).join(", ")}`;
-    return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${PALETTE[i % PALETTE.length]}"></i> <b>${esc(p.name)}</b></td><td>${esc(p.type)}</td>
+    return `<tr><td><i style="display:inline-block;width:10px;height:10px;background:${PALETTE[i % PALETTE.length]}"></i> <b>${esc(p.name)}</b></td><td>${esc(p.type)}</td>
       <td class="mono">${p.byte_position ?? "–"}${p.bit_position ? "." + p.bit_position : ""}</td><td class="mono">${p.bit_length ?? "var"}</td>
       <td>${esc(d.name || "")}${d.compu_method ? ` <span class="badge">${esc(d.compu_method)}</span>` : ""}</td><td class="mono">${esc(d.coded_type || "")}</td><td>${esc(d.unit || "")}</td><td>${val}</td></tr>`;
   }).join("");
@@ -226,9 +225,9 @@ $$(".chip[data-hex]").forEach(c => c.onclick = () => { $("#decHex").value = c.da
 async function decodeNow() {
   try {
     const r = await api(`/api/db/${encodeURIComponent(S.db)}/decode`, {method: "POST", body: {layer: $("#decLayer").value, hex: $("#decHex").value, request_hex: $("#decReq").value || null}});
-    $("#decOut").innerHTML = r.map(m => `<div class="card" style="background:#0d1320"><div class="row" style="margin:0"><span class="badge ${kindCls(m.kind)}">${esc(m.kind.toUpperCase())}</span>
+    $("#decOut").innerHTML = r.map(m => `<div class="card" style="background:var(--panel2)"><div class="row" style="margin:0"><span class="badge ${kindCls(m.kind)}">${esc(m.kind.toUpperCase())}</span>
       <b>${esc(m.coding_object)}</b> ${m.service ? `<span class="muted">of service ${esc(m.service)}</span>` : ""}</div>${bytesHtml(m)}${paramsKv(m.params)}</div>`).join("");
-  } catch (e) { $("#decOut").innerHTML = `<div class="err">✕ ${esc(e.message)}</div>`; }
+  } catch (e) { $("#decOut").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 const kindCls = k => ({request: "req", positive: "pos", negative: "neg", global_negative: "gnr"}[k] || "");
 
@@ -246,7 +245,7 @@ $("#cmpGo").onclick = async () => {
     h += `<div class="diff-layer"><div class="row" style="margin:0"><span class="badge">${esc(l.diag_layer_type)}</span><b>${esc(l.diag_layer)}</b><span class="muted small">score ${l.change_score}</span></div>`;
     for (const s of l.new_services) h += `<div class="chg new">+ service ${esc(s.short_name || s)}</div>`;
     for (const s of l.deleted_services) h += `<div class="chg old">- service ${esc(s.short_name || s)}</div>`;
-    for (const s of l.renamed_services) h += `<div class="chg">↻ <span class="old">${esc(s.old_service_name)}</span> → <span class="new">${esc(s.new_service_name)}</span></div>`;
+    for (const s of l.renamed_services) h += `<div class="chg">renamed <span class="old">${esc(s.old_service_name)}</span> → <span class="new">${esc(s.new_service_name)}</span></div>`;
     for (const s of l.services_with_parameter_changes) {
       h += `<div style="margin:8px 0 4px"><b>${esc(s.service.short_name)}</b></div>`;
       for (const p of s.changed_parameters) {
@@ -284,7 +283,7 @@ async function connectLive() {
   const st = await api("/api/live/start", {method: "POST", body: {db: S.db, layer: $("#liveLayer").value, chart: $("#liveChart").value || null}});
   S.after = 0; S.live = st; S.frameTimes = [];
   $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
-  $("#liveIds").innerHTML = `<span class="pill on">● connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
+  $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
   $("#liveStart").textContent = "Reconnect";
   drawChart();
   if (!S.polling) S.polling = setInterval(poll, 250);
@@ -318,7 +317,7 @@ function addFrame(f) {
   const tb = $("#trace tbody"), tr = document.createElement("tr");
   tr.className = f.node + " new";
   const bytes = f.data.match(/../g).map((b, i) => i === 0 ? `<b>${b}</b>` : b).join(" ");
-  tr.innerHTML = `<td>${f.seq}</td><td>${f.t.toFixed(2)}</td><td>${hex2(f.id)}</td><td>${f.node === "ECU" ? "ECU →" : "→ Tester"}</td><td><span class="isotp ${f.isotp}">${f.isotp}</span></td><td>${bytes}</td><td>${f.telegram.map(t => `<span style="color:#fbbf24">${t}</span>`).join(" ")}</td>`;
+  tr.innerHTML = `<td>${f.seq}</td><td>${f.t.toFixed(2)}</td><td>${hex2(f.id)}</td><td>${f.node === "ECU" ? "ECU →" : "→ Tester"}</td><td><span class="isotp ${f.isotp}">${f.isotp}</span></td><td>${bytes}</td><td>${f.telegram.map(t => `<span class="telegram">${t}</span>`).join(" ")}</td>`;
   tr.cells[3].textContent = f.node === "ECU" ? "ECU → tester" : "tester → ECU";
   tb.appendChild(tr);
   while (tb.rows.length > 400) tb.deleteRow(0);
@@ -333,22 +332,22 @@ function addTx(t) {
   const stateChange = t.state_before && t.state_before !== t.state_after ? `<span class="badge gnr">${esc(t.state_before)} → ${esc(t.state_after)}</span>` : "";
   el.innerHTML = `<div class="hd"><b>${esc(t.service || t.request.coding_object || "raw telegram")}</b><span>${stateChange} <span class="muted small">${t.blocked ? "" : `${t.frames ?? "?"} frames · ${t.latency_ms} ms`}</span></span></div>
     <div class="line"><span class="arrow">→</span><span class="badge req">REQ</span><span>${spaced(t.request.hex)}</span><span class="muted">${esc(t.request.coding_object || "")}</span></div>${paramsKvSmall(t.request.params)}
-    ${t.blocked ? `<div class="line"><span class="arrow">⛔</span><span style="color:#fbbf24">Not sent: odxtools StateMachine — no PRE-CONDITION-STATE-REF of <b>${esc(t.service)}</b> applies in state <b>${esc(t.state_before)}</b> of ${esc(t.chart)}</span></div>` :
+    ${t.blocked ? `<div class="line"><span class="arrow">&times;</span><span class="note">Blocked, not sent: odxtools StateMachine — no PRE-CONDITION-STATE-REF of <b>${esc(t.service)}</b> applies in state <b>${esc(t.state_before)}</b> of ${esc(t.chart)}</span></div>` :
       resp ? `<div class="line"><span class="arrow">←</span><span class="badge ${kindCls(resp.kind)}">${esc(resp.kind.replace("_", " ").toUpperCase())}</span><span>${spaced(resp.hex)}</span><span class="muted">${esc(resp.coding_object || "")}</span></div>${paramsKvSmall(resp.params)}` :
-      `<div class="line"><span class="arrow">←</span><span style="color:#f87171">timeout — no response</span></div>`}`;
+      `<div class="line"><span class="arrow">←</span><span class="note bad">Timeout, no response</span></div>`}`;
   const log = $("#txlog"); log.prepend(el);
   while (log.children.length > 60) log.lastChild.remove();
 }
-function addTxError(msg) { const el = document.createElement("div"); el.className = "tx neg"; el.innerHTML = `<div class="err">✕ ${esc(msg)}</div>`; $("#txlog").prepend(el); }
+function addTxError(msg) { const el = document.createElement("div"); el.className = "tx neg"; el.innerHTML = `<div class="err">${esc(msg)}</div>`; $("#txlog").prepend(el); }
 const spaced = h => (h.match(/../g) || []).join(" ").toUpperCase();
 function paramsKvSmall(p) { const h = paramsKv(p); return h.replace('style="margin-left:0"', ""); }
 
 function renderGauges(e) {
   const g = (label, v, max, lim, unit, col) => `<div class="gauge"><div class="lab"><span>${label}</span><span class="mono">${v}${unit}</span></div><div class="bar"><div class="fill" style="width:${Math.min(100, v / max * 100)}%;background:${col(v)}"></div>${lim ? `<div class="lim" style="left:${lim / max * 100}%" title="limit ${lim}"></div>` : ""}</div></div>`;
-  $("#gauges").innerHTML = `<div class="row" style="margin:0 0 6px"><span class="pill ${e.session_active ? "on" : "off"}">${e.session_active ? "● session active" : "○ no session"}</span>${e.fire_ring ? `<span class="pill" style="background:#3a1a0c;color:#fb923c">🔥 fire ring</span>` : ""}<span class="muted small">${e.total_flips} flips total</span></div>` +
-    g("Dizziness", e.dizziness, 255, e.limits.dizziness, "", v => v >= e.limits.dizziness ? "#ef4444" : v > e.limits.dizziness * .7 ? "#f59e0b" : "#00adef") +
-    g("Temperature", e.temperature, 100, e.limits.temperature, " °C", v => v >= e.limits.temperature ? "#ef4444" : v > e.limits.temperature * .85 ? "#f59e0b" : "#22c55e") +
-    g("Happiness", e.happiness, 255, 0, "", () => "#7c5cff");
+  $("#gauges").innerHTML = `<div class="row" style="margin:0 0 6px"><span class="pill ${e.session_active ? "on" : "off"}">${e.session_active ? "Session active" : "No session"}</span>${e.fire_ring ? `<span class="pill fire">Fire ring</span>` : ""}<span class="muted small">${e.total_flips} flips total</span></div>` +
+    g("Dizziness", e.dizziness, 255, e.limits.dizziness, "", v => v >= e.limits.dizziness ? "#d92121" : v > e.limits.dizziness * .7 ? "#e09400" : "#000") +
+    g("Temperature", e.temperature, 100, e.limits.temperature, " °C", v => v >= e.limits.temperature ? "#d92121" : v > e.limits.temperature * .85 ? "#e09400" : "#000") +
+    g("Happiness", e.happiness, 255, 0, "", () => "#0078d6");
 }
 
 function drawChart() {
@@ -359,20 +358,20 @@ function drawChart() {
   const active = S.live?.charts?.[sc.name] || sc.start;
   const W = 360, H = 330, cx = W / 2, cy = H / 2 + 6, R = 118;
   const pos = {}; sc.states.forEach((s, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / sc.states.length; pos[s] = [cx + R * Math.cos(a), cy + R * Math.sin(a)]; });
-  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#6b7da3"/></marker></defs>`;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9a9a9a"/></marker></defs>`;
   for (const t of sc.transitions) {
     const [x1, y1] = pos[t.from], [x2, y2] = pos[t.to];
     const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len, bend = 26;
     const sx = x1 + dx / len * 34, sy = y1 + dy / len * 22, ex = x2 - dx / len * 36, ey = y2 - dy / len * 24;
     const mx = (sx + ex) / 2 + nx * bend, my = (sy + ey) / 2 + ny * bend;
     const trig = t.services.length;
-    svg += `<path d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="${trig ? "#00adef" : "#3e4c6b"}" stroke-width="${trig ? 1.8 : 1.2}" marker-end="url(#ar2)"/>
-      <text x="${mx}" y="${my}" font-size="9.5" text-anchor="middle" fill="${trig ? "#9fd8ff" : "#6b7da3"}">${esc(t.name)}${trig ? " ⟵ " + esc(t.services.join("/")) : ""}</text>`;
+    svg += `<path d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="${trig ? "#0078d6" : "#bdbdbd"}" stroke-width="${trig ? 1.5 : 1}" marker-end="url(#ar2)"/>
+      <text x="${mx}" y="${my}" font-size="9.5" text-anchor="middle" fill="${trig ? "#005fa9" : "#9a9a9a"}">${esc(t.name)}${trig ? " · " + esc([...new Set(t.services)].join("/")) : ""}</text>`;
   }
   for (const s of sc.states) {
     const [x, y] = pos[s], on = s === active;
-    svg += `<g><ellipse cx="${x}" cy="${y}" rx="44" ry="22" fill="${on ? "#00adef" : "#141c2e"}" stroke="${on ? "#9fe4ff" : "#3a4a6b"}" stroke-width="${on ? 2.5 : 1.2}">${on ? `<animate attributeName="stroke-opacity" values="1;.3;1" dur="1.6s" repeatCount="indefinite"/>` : ""}</ellipse>
-      <text x="${x}" y="${y + 4}" font-size="11.5" text-anchor="middle" fill="${on ? "#001018" : "#dce4f2"}" font-weight="${on ? 700 : 500}">${esc(s)}</text></g>`;
+    svg += `<g><ellipse cx="${x}" cy="${y}" rx="44" ry="22" fill="${on ? "#000" : "#fff"}" stroke="${on ? "#000" : "#bdbdbd"}" stroke-width="1.2"></ellipse>
+      <text x="${x}" y="${y + 4}" font-size="11.5" text-anchor="middle" fill="${on ? "#fff" : "#333"}" font-weight="${on ? 600 : 400}">${esc(s)}</text></g>`;
   }
   $("#chartSvg").innerHTML = svg + "</svg>";
 }
