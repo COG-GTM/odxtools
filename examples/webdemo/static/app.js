@@ -545,6 +545,9 @@ function fmRenderTimeline(ecu) {
       marks.appendChild(m);
     }
     m.style.left = pos(ev.t);
+    // keep tooltips of markers near the ends inside the strip
+    const x = Math.min(100, ev.t / span * 100);
+    m.classList.toggle("edge-l", x < 15); m.classList.toggle("edge-r", x > 85);
   });
   // keep the codes of markers which are close together readable
   let last = -1e9; $$(".fm-mark:not(.cleared) .code", marks).forEach(c => { const x = parseFloat(c.parentElement.style.left); c.style.visibility = x - last < 4 ? "hidden" : ""; if (c.style.visibility === "") last = x; });

@@ -169,6 +169,8 @@ svg text{font-family:var(--sans)}
 .fm-mark .tip{position:absolute;top:26px;left:50%;transform:translateX(-50%);background:#000;color:#fff;padding:10px 12px;font:12px/1.45 var(--sans);width:280px;opacity:0;pointer-events:none;transition:opacity .15s;z-index:4}
 .fm-mark .tip b{display:block;font-weight:600}
 .fm-mark:hover .tip{opacity:1}
+.fm-mark.edge-l .tip{left:-8px;transform:none}
+.fm-mark.edge-r .tip{left:auto;right:-8px;transform:none}
 .fm-empty-line{position:absolute;left:0;right:0;top:66px;text-align:center;color:var(--muted);font-size:12px}
 /* cards */
 .fm-cards{display:flex;flex-direction:column;gap:12px;min-height:120px}
