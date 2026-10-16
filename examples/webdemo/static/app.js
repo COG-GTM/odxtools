@@ -289,13 +289,20 @@ async function connectLive() {
   S.gen = (S.gen || 0) + 1;
   const st = await api("/api/live/start", {method: "POST", body: {db: S.db, layer: $("#liveLayer").value, chart: $("#liveChart").value || null}});
   if (conn !== S.conn) return;
-  S.gen++; S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
+  adoptSession(st);
+  if (!S.polling) S.polling = setInterval(poll, 250);
+  poll();
+}
+
+// Show whichever session the server is actually running (a later reconnect or another tab may have replaced ours).
+function adoptSession(st) {
+  S.gen = (S.gen || 0) + 1; S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
+  if (st.db === S.db && st.layer !== $("#liveLayer").value && liveLayerSummary() && S.summary.layers.some(l => l.name === st.layer)) { $("#liveLayer").value = st.layer; updateLiveChartOptions(); }
+  if (st.chart && [...$("#liveChart").options].some(o => o.value === st.chart)) $("#liveChart").value = st.chart;
   $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
   $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
   $("#liveStart").textContent = "Reconnect";
   drawChart();
-  if (!S.polling) S.polling = setInterval(poll, 250);
-  poll();
 }
 
 async function sendLive(body) {
@@ -310,7 +317,8 @@ $("#liveLong").onclick = () => { $("#liveRaw").value = "ba 12 03 " + Array.from(
 async function poll() {
   const gen = S.gen;
   let st; try { st = await api(`/api/live/poll?after=${S.after}`); } catch { return; }
-  if (gen !== S.gen || !st.running || st.session !== S.live?.session) return;
+  if (gen !== S.gen || !st.running) return;
+  if (st.session !== S.live?.session) { adoptSession(st); return poll(); }
   const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;
   for (const f of st.frames.filter(fresh)) addFrame(f);
   for (const t of st.transactions.filter(fresh)) {
