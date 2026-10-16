@@ -689,6 +689,7 @@ class LiveSession:
                 for k, v in self.fsms.items()
             },
             "frame_count": len(self.frames),
+            "seq": max((x[-1]["seq"] for x in (self.frames, self.transactions) if x), default=0),
         }
 
     def close(self) -> None:

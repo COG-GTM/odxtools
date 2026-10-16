@@ -277,11 +277,16 @@ async function loadLiveSvcForm() {
   buildForm($("#liveForm"), d.request, () => {});
 }
 $("#liveStart").onclick = connectLive;
-$("#liveReset").onclick = async () => { await api("/api/live/reset", {method: "POST"}); S.live.charts = null; S.lastTrans = null; poll(); };
+$("#liveReset").onclick = async () => {
+  S.gen = (S.gen || 0) + 1;
+  const st = await api("/api/live/reset", {method: "POST"});
+  S.gen++; S.after = Math.max(S.after, st.seq); S.live.charts = null; S.lastTrans = null; poll();
+};
 
 async function connectLive() {
+  S.gen = (S.gen || 0) + 1;
   const st = await api("/api/live/start", {method: "POST", body: {db: S.db, layer: $("#liveLayer").value, chart: $("#liveChart").value || null}});
-  S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
+  S.gen++; S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
   $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
   $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
   $("#liveStart").textContent = "Reconnect";
@@ -300,16 +305,20 @@ $("#liveSendRaw").onclick = () => sendLive({raw: $("#liveRaw").value});
 $("#liveLong").onclick = () => { $("#liveRaw").value = "ba 12 03 " + Array.from({length: 17}, (_, i) => (0xa0 + i).toString(16)).join(" "); sendLive({raw: $("#liveRaw").value}); };
 
 async function poll() {
+  const gen = S.gen;
   let st; try { st = await api(`/api/live/poll?after=${S.after}`); } catch { return; }
-  if (!st.running) return;
-  for (const f of st.frames) addFrame(f);
-  for (const t of st.transactions) {
+  if (gen !== S.gen || !st.running) return;
+  const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;
+  for (const f of st.frames.filter(fresh)) addFrame(f);
+  for (const t of st.transactions.filter(fresh)) {
     addTx(t);
     if (!t.blocked && t.state_before && t.state_before !== t.state_after) S.lastTrans = {chart: t.chart, from: t.state_before, to: t.state_after, service: t.service};
   }
   const all = [...st.frames, ...st.transactions]; if (all.length) S.after = Math.max(S.after, ...all.map(x => x.seq));
   renderGauges(st.ecu);
-  if (JSON.stringify(st.charts) !== JSON.stringify(S.live?.charts)) { S.live = {...S.live, ...st}; drawChart(); }
+  const chartsChanged = JSON.stringify(st.charts) !== JSON.stringify(S.live?.charts);
+  if (chartsChanged) S.live = {...S.live, ...st};
+  if (chartsChanged || S.lastTrans !== prevTrans) drawChart();
   S.live.chart = st.chart;
   const now = performance.now(); S.frameTimes = S.frameTimes.filter(t => now - t < 5000);
   $("#frameRate").textContent = `${st.frame_count} frames captured by passive sniffer · ${(S.frameTimes.length / 5).toFixed(1)} frames/s`;
