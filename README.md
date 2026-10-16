@@ -54,6 +54,7 @@ sent to/received from ECUs in a pythonic manner.
   - [The `find` subcommand](#the-find-subcommand)
   - [The `decode` subcommand](#the-decode-subcommand)
   - [The `compare` subcommand](#the-compare-subcommand)
+- [Web demo: ODX Diagnostic Workbench](#web-demo-odx-diagnostic-workbench)
 - [Testing](#testing)
 - [Contributing](#contributing)
 - [Code of Conduct](#code-of-conduct)
@@ -718,6 +719,39 @@ Changed diagnostic services of diagnostic layer 'somersault_base_variant' (BASE-
 
 [...]
 ```
+
+## Web demo: ODX Diagnostic Workbench
+
+`examples/webdemo` contains a browser UI that is built directly on top
+of the `odxtools` API. It can be started using
+
+```bash
+pip install .[webdemo]
+python3 examples/webdemo/server.py --port 8000
+```
+
+and then opening `http://localhost:8000`. It offers:
+
+- **Overview:** the diagnostic layer inheritance graph (including
+  `NOT-INHERITED` services), communication parameters, document
+  revisions and a service availability matrix.
+- **Service inspector:** all parameters of the requests and responses
+  of a service including their DOPs, compu methods and coded types. A
+  live request encoder shows which bytes are produced by which
+  parameter via `Request.encode()`.
+- **Live virtual ECU:** a tester and a virtual somersault ECU talk UDS
+  over ISO-TP (`can-isotp`) on a python-can `virtual` bus. Requests
+  and responses are encoded/decoded by `odxtools`, the ECU's
+  `STATE-CHART`s are evaluated using `odxtools.statemachine`, and a
+  passive sniffer reassembles the CAN frames using
+  `IsoTpStateMachine`. The physical behavior of the ECU (dizziness,
+  temperature) is modeled for demonstration purposes.
+- **Decoder:** decodes arbitrary request/response telegrams against
+  any diagnostic layer.
+- **Compare:** visualizes the result of the `compare` tool's
+  `DiffEngine` for two PDX files.
+
+Custom PDX files can be uploaded via the UI.
 
 ## Testing
 
