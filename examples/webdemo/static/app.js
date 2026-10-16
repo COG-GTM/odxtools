@@ -538,7 +538,16 @@ async function fmClear() {
   fmCloseDrawer(); FM.lastRecords = [];
   const cards = [...FM.cards.values()]; FM.cards.clear();
   cards.forEach((c, i) => setTimeout(() => c.classList.add("leave"), i * 80));
-  setTimeout(() => { cards.forEach(c => c.remove()); $(".fm-empty", $("#fmCards"))?.remove(); $("#fmCards").insertAdjacentHTML("beforeend", fmEmpty(true)); $("#fmCount").textContent = "0 DTCs"; }, cards.length * 80 + 260);
+  await sleep(cards.length * 80 + 260);
+  cards.forEach(c => c.remove()); $(".fm-empty", $("#fmCards"))?.remove();
+  await poll();
+  if (S.ecu?.fault_memory?.faults.length) {
+    // a still-failing monitor (e.g. the acrobat is still too hot) re-stores its DTC right away
+    fmProgress(`<span class="tag model">MODELED</span> a fault condition is still active and was re-detected after the clear; reading the fault memory again`);
+    await fmRead();
+    return;
+  }
+  $("#fmCards").insertAdjacentHTML("beforeend", fmEmpty(true)); $("#fmCount").textContent = "0 DTCs";
 }
 
 // ---- modeled fault triggers: drive the ECU through ordinary ODX services
@@ -546,11 +555,13 @@ const fmHas = n => fmLayer()?.services.some(s => s.name === n);
 async function fmReady() {
   if (!S.live) await connectLive();
   await poll();
+  if (!S.ecu) { await connectLive(); await poll(); }
+  if (!S.ecu) throw new Error("no live session for the selected ECU");
   for (let i = 0; i < 60 && S.ecu && S.ecu.temperature > S.ecu.limits.temperature; i++) {
     fmProgress(`<span class="tag model">MODELED</span> waiting for the acrobat to cool down: ${esc(S.ecu.temperature)} °C &gt; ${esc(S.ecu.limits.temperature)} °C, the ECU answers <i>too_hot</i> until then`);
     await sleep(600); await poll();
   }
-  if (!S.ecu.session_active) await sendLive({service: "session_start", params: {bribe: "1"}});
+  if (!S.ecu?.session_active) await sendLive({service: "session_start", params: {bribe: "1"}});
 }
 const FM_RECIPES = [
   {id: "fire", title: "Fire-ring flip", needs: ["set_operation_params", "do_forward_flips"],
@@ -573,18 +584,26 @@ const FM_RECIPES = [
       }
     }},
   {id: "hot", title: "Overheat", needs: ["do_forward_flips"],
-    what: "Repeated flips until the temperature crosses the limit",
+    what: "Repeated flips (fire ring lit, 4 °C each) until the temperature crosses the limit",
     async run() {
-      for (let i = 0; i < 40; i++) {
-        const e = S.ecu, lim = e.limits;
-        if (e.temperature > lim.temperature) return;
-        const need = Math.ceil((lim.temperature - e.temperature + 0.01) / (e.fire_ring ? 4 : 2.5));
-        const room = Math.floor((lim.dizziness - 1 - e.dizziness) / 14);
-        const n = Math.min(10, need, room);
-        if (n < 1) { fmProgress(`<span class="tag model">MODELED</span> letting the dizziness settle (${esc(e.dizziness)} / ${esc(lim.dizziness)}) so the flips are not refused`); await sleep(700); await poll(); continue; }
-        fmProgress(`<span class="tag model">MODELED</span> ${n} forward flip${n > 1 ? "s" : ""} · ${esc(e.temperature)} °C → limit ${esc(lim.temperature)} °C`);
-        await sendLive({service: "do_forward_flips", params: {forward_soberness_check: "0x12", num_flips: String(n)}});
-        await sleep(400);
+      const ring = fmHas("set_operation_params");
+      if (ring) await sendLive({service: "set_operation_params", params: {use_fire_ring: "true"}});
+      try {
+        const until = Date.now() + 120000;
+        while (S.ecu && Date.now() < until) {
+          const e = S.ecu, lim = e.limits;
+          if (e.temperature > lim.temperature) return;
+          const need = Math.ceil((lim.temperature - e.temperature + 0.01) / (e.fire_ring ? 4 : 2.5));
+          const room = Math.floor((lim.dizziness - 1 - e.dizziness) / 14);
+          // wait until one burst can reach the limit, so cooling cannot undo the heat in between
+          if (room < Math.min(need, 10)) { fmProgress(`<span class="tag model">MODELED</span> letting the dizziness settle (${esc(e.dizziness)} / ${esc(lim.dizziness)}) so ${need} flip${need > 1 ? "s" : ""} in a row are not refused`); await sleep(700); await poll(); continue; }
+          const n = Math.min(10, need);
+          fmProgress(`<span class="tag model">MODELED</span> ${n} forward flip${n > 1 ? "s" : ""} · ${esc(e.temperature)} °C → limit ${esc(lim.temperature)} °C`);
+          await sendLive({service: "do_forward_flips", params: {forward_soberness_check: "0x12", num_flips: String(n)}});
+          await sleep(400);
+        }
+      } finally {
+        if (ring && S.live) await sendLive({service: "set_operation_params", params: {use_fire_ring: "false"}});
       }
     }},
 ];
@@ -604,7 +623,7 @@ async function fmProvoke(r) {
     await fmReady(); await r.run(); await poll();
     const ev = (S.ecu?.fault_memory?.events || []).slice(before).filter(e => e.kind === "stored");
     fmProgress(ev.length ? `<span class="tag model">MODELED</span> the ECU stored ${ev.map(e => `<b class="mono">${esc(fmHex(e.trouble_code))}</b>`).join(", ")}: ${esc(ev[ev.length - 1].trigger)}. Press <b>Read DTCs</b> to fetch it over UDS.` : `<span class="tag model">MODELED</span> no new fault was stored.`);
-  } finally { FM.busy = false; fmSetBusy(); }
+  } catch (e) { fmProgress(`<span class="err">${esc(r.title)} stopped: ${esc(e.message)}</span>`); } finally { FM.busy = false; fmSetBusy(); }
 }
 function fmSetBusy() { const off = FM.busy || !fmHasFaults(fmLayer()); ["#fmRead", "#fmClear", "#fmProvoke"].forEach(id => $(id).disabled = off); }
 
