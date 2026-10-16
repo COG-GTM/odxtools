@@ -158,6 +158,9 @@ class TestWebDemo(unittest.TestCase):
                 "chart": "angry_chart"
             })
         try:
+            tx = self.client.post("/api/live/send", json={"raw": "31 01 ff 00"}).json()
+            self.assertEqual(tx["response"]["hex"], "7f3111")
+            self.assertNotEqual(tx["response"]["kind"], "global_negative")
             # raw session_start (bribe=1) with a trailing byte
             tx = self.client.post("/api/live/send", json={"raw": "10 00 01 00"}).json()
             self.assertEqual(tx["service"], "session_start")

@@ -510,6 +510,9 @@ def decode_pdu(dl: DiagLayer, pdu: bytes, req: bytes | None) -> list[dict[str, A
     if not msgs and req:
         # responses which may be sent for any request
         for gnr in getattr(dl, "global_negative_responses", []):
+            # the decoder does not verify CODED-CONSTs, so match them first
+            if not pdu.startswith(bytes(gnr.coded_const_prefix())):
+                continue
             try:
                 param_dict = gnr.decode(pdu)
             except Exception:
