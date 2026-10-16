@@ -558,6 +558,8 @@ def compare(old: str, new: str) -> dict[str, Any]:
 # live virtual vehicle network
 #####
 
+_session_ids = itertools.count(1)
+
 
 class LiveSession:
 
@@ -572,6 +574,7 @@ class LiveSession:
         if self.rx_id is None or self.tx_id is None:
             raise HTTPException(400, "ECU variant does not specify CAN IDs")
         self.seq = itertools.count(1)
+        self.session_id = next(_session_ids)
         self.frames: deque[dict[str, Any]] = deque(maxlen=2000)
         self.transactions: deque[dict[str, Any]] = deque(maxlen=500)
         self.t0 = time.monotonic()
@@ -688,6 +691,7 @@ class LiveSession:
                 k: v.active_state.short_name
                 for k, v in self.fsms.items()
             },
+            "session": self.session_id,
             "frame_count": len(self.frames),
             "seq": max((x[-1]["seq"] for x in (self.frames, self.transactions) if x), default=0),
         }

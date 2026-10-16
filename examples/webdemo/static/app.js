@@ -280,12 +280,15 @@ $("#liveStart").onclick = connectLive;
 $("#liveReset").onclick = async () => {
   S.gen = (S.gen || 0) + 1;
   const st = await api("/api/live/reset", {method: "POST"});
+  if (!S.live || st.session !== S.live.session) return;
   S.gen++; S.after = Math.max(S.after, st.seq); S.live.charts = null; S.lastTrans = null; poll();
 };
 
 async function connectLive() {
+  const conn = S.conn = (S.conn || 0) + 1;
   S.gen = (S.gen || 0) + 1;
   const st = await api("/api/live/start", {method: "POST", body: {db: S.db, layer: $("#liveLayer").value, chart: $("#liveChart").value || null}});
+  if (conn !== S.conn) return;
   S.gen++; S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
   $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
   $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
@@ -307,7 +310,7 @@ $("#liveLong").onclick = () => { $("#liveRaw").value = "ba 12 03 " + Array.from(
 async function poll() {
   const gen = S.gen;
   let st; try { st = await api(`/api/live/poll?after=${S.after}`); } catch { return; }
-  if (gen !== S.gen || !st.running) return;
+  if (gen !== S.gen || !st.running || st.session !== S.live?.session) return;
   const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;
   for (const f of st.frames.filter(fresh)) addFrame(f);
   for (const t of st.transactions.filter(fresh)) {
