@@ -56,7 +56,9 @@ async function openDb(name) {
   $("#svcLayer").value = def.name; $("#decLayer").value = def.name;
   const lazy = ecus.find(l => l.state_charts.length); if (lazy) $("#liveLayer").value = lazy.name;
   updateLiveChartOptions();
+  if (S.live && S.live.db === name) syncLiveSelectors(S.live);
   selectLayer(def.name);
+  document.dispatchEvent(new CustomEvent("db-opened", {detail: S.summary}));
 }
 
 // ---------------------------------------------------------------- overview
@@ -297,13 +299,20 @@ async function connectLive() {
 }
 
 // Follow the server's session when it matches the selected ECU (e.g. after overlapping reconnects or another tab).
+function syncLiveSelectors(st) {
+  if (st.layer !== $("#liveLayer").value && [...$("#liveLayer").options].some(o => o.value === st.layer)) {
+    $("#liveLayer").value = st.layer; updateLiveChartOptions();
+  }
+  if (st.chart && [...$("#liveChart").options].some(o => o.value === st.chart)) $("#liveChart").value = st.chart;
+}
 function adoptSession(st) {
   S.gen = (S.gen || 0) + 1; S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
-  if (st.chart && [...$("#liveChart").options].some(o => o.value === st.chart)) $("#liveChart").value = st.chart;
+  syncLiveSelectors(st);
   $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
   $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
   $("#liveStart").textContent = "Reconnect"; $("#liveReset").disabled = false;
   drawChart();
+  document.dispatchEvent(new CustomEvent("live-session", {detail: st}));
 }
 
 async function sendLive(body) {
@@ -326,6 +335,7 @@ async function poll() {
     $("#liveStart").textContent = "Connect"; $("#liveReset").disabled = true;
     $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = ""; $("#gauges").innerHTML = ""; $("#frameRate").textContent = "";
     drawChart();
+    document.dispatchEvent(new CustomEvent("live-session", {detail: null}));
     return;
   }
   const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;
@@ -342,6 +352,7 @@ async function poll() {
   S.live.chart = st.chart;
   const now = performance.now(); S.frameTimes = S.frameTimes.filter(t => now - t < 5000);
   $("#frameRate").textContent = `${st.frame_count} frames captured by passive sniffer · ${(S.frameTimes.length / 5).toFixed(1)} frames/s`;
+  document.dispatchEvent(new CustomEvent("live-status", {detail: {st, fresh: st.transactions.filter(fresh)}}));
 }
 
 function addFrame(f) {
@@ -387,27 +398,32 @@ function drawChart() {
   const sc = l?.state_charts.find(c => c.name === name);
   if (!sc) { $("#chartSvg").innerHTML = `<div class="muted" style="padding:30px 0">This ECU variant defines no STATE-CHARTs.</div>`; $("#chartName").textContent = ""; return; }
   $("#chartName").textContent = `${sc.name} · start: ${sc.start}`;
-  const active = S.live?.charts?.[sc.name] || sc.start;
+  $("#chartSvg").innerHTML = chartHtml(sc, S.live?.charts?.[sc.name] || sc.start, S.lastTrans, "ar2");
+}
+
+// Renders an ODX STATE-CHART; the transition which ran last is highlighted.
+function chartHtml(sc, active, lastTrans, marker) {
   const W = 400, H = 360, cx = W / 2, cy = H / 2 + 6, R = 132;
   const pos = {}; sc.states.forEach((s, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / sc.states.length; pos[s] = [cx + R * Math.cos(a), cy + R * Math.sin(a)]; });
-  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9a9a9a"/></marker></defs>`;
+  const lt = lastTrans?.chart === sc.name && lastTrans.to === active ? lastTrans : null;
+  const ran = lt && sc.transitions.find(t => t.from === lt.from && t.to === lt.to && (!lt.service || t.services.includes(lt.service)));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><marker id="${marker}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9a9a9a"/></marker><marker id="${marker}r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0L10,5L0,10z" fill="#000"/></marker></defs>`;
   for (const t of sc.transitions) {
     const [x1, y1] = pos[t.from], [x2, y2] = pos[t.to];
     const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len, bend = 30;
     const sx = x1 + dx / len * 34, sy = y1 + dy / len * 22, ex = x2 - dx / len * 36, ey = y2 - dy / len * 24;
     const mx = (sx + ex) / 2 + nx * bend, my = (sy + ey) / 2 + ny * bend;
     const trig = t.services.length;
-    svg += `<path d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="${trig ? "#0078d6" : "#bdbdbd"}" stroke-width="${trig ? 1.5 : 1}" marker-end="url(#ar2)"/>`;
+    svg += t === ran ? `<path class="ran" d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="#000" stroke-width="2.4" marker-end="url(#${marker}r)"/>`
+      : `<path d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="${trig ? "#0078d6" : "#bdbdbd"}" stroke-width="${trig ? 1.5 : 1}" marker-end="url(#${marker})"/>`;
   }
   for (const s of sc.states) {
     const [x, y] = pos[s], on = s === active;
     svg += `<g><ellipse cx="${x}" cy="${y}" rx="44" ry="22" fill="${on ? "#000" : "#fff"}" stroke="${on ? "#000" : "#bdbdbd"}" stroke-width="1.2"></ellipse>
       <text x="${x}" y="${y + 4}" font-size="11.5" text-anchor="middle" fill="${on ? "#fff" : "#333"}" font-weight="${on ? 600 : 400}">${esc(s)}</text></g>`;
   }
-  const lt = S.lastTrans?.chart === sc.name && S.lastTrans.to === active ? S.lastTrans : null;
-  const ran = lt && sc.transitions.find(t => t.from === lt.from && t.to === lt.to && (!lt.service || t.services.includes(lt.service)));
   const rows = sc.transitions.map(t => `<tr${t === ran ? ' class="cur"' : ""}><td>${esc(t.name)}</td><td class="mono">${esc(t.from)} &rarr; ${esc(t.to)}</td><td class="mono">${esc([...new Set(t.services)].join(", ") || "\u2013")}</td></tr>`).join("");
-  $("#chartSvg").innerHTML = svg + `</svg><table class="transitions"><tr><th>Transition</th><th>States</th><th>Triggered by</th></tr>${rows}</table>`;
+  return svg + `</svg><table class="transitions"><tr><th>Transition</th><th>States</th><th>Triggered by</th></tr>${rows}</table>`;
 }
 
 // ---------------------------------------------------------------- scenario
