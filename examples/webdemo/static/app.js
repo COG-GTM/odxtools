@@ -657,8 +657,9 @@ $("#fmClear").onclick = () => fmBusy(async () => {
   if (tx?.response?.kind !== "positive") { fmRenderCards(fmNrcHtml(tx)); return; }
   S.fm.read = true; S.fm.records = []; fmRenderCards();
   // faults which are still present are stored again right away: re-read
+  const gen = S.fm.gen;
   await sleep(400);
-  await fmRead();
+  if (gen === S.fm.gen) await fmRead();
 });
 
 function fmCloseDrawer() { S.fm.sel = null; $("#fmDrawer").hidden = true; $$("#fmCards .fm-card").forEach(c => c.classList.remove("sel")); }
