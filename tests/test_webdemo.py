@@ -176,6 +176,141 @@ class TestWebDemo(unittest.TestCase):
             self.server._live.close()
             self.server._live = None
 
+    def test_fault_memory(self) -> None:
+        import tempfile
+
+        import odxtools
+        from examples.mksomersaultdtcpdx import build_database
+
+        # the bundled demo PDX is what the generator produces
+        with tempfile.TemporaryDirectory() as tmp:
+            pdx = Path(tmp) / "somersault_dtc.pdx"
+            odxtools.write_pdx_file(str(pdx), build_database())
+            built = odxtools.load_pdx_file(pdx)
+        for layer in ("somersault_lazy", "somersault_assiduous"):
+            self.assertEqual([
+                s.short_name
+                for s in built.ecus[layer].services
+                if s.short_name in ("read_dtc_by_status_mask", "read_dtc_snapshot", "clear_dtcs")
+            ], ["read_dtc_by_status_mask", "read_dtc_snapshot", "clear_dtcs"])
+
+        names = [d["name"] for d in self.client.get("/api/databases").json()]
+        self.assertIn("somersault_dtc.pdx", names)
+        self.assertEqual(names[0], "somersault.pdx")
+        st = self.client.post(
+            "/api/live/start", json={
+                "db": "somersault_dtc.pdx",
+                "layer": "somersault_assiduous"
+            }).json()
+        self.assertTrue(st["ecu"]["fault_memory"]["supported"])
+
+        def send(**body: Any) -> Any:
+            return self.client.post("/api/live/send", json=body).json()
+
+        try:
+            tx = send(raw="19 02 ff")
+            self.assertEqual(tx["service"], "read_dtc_by_status_mask")
+            self.assertEqual(tx["response"]["hex"], "5902ff")
+
+            # overheat the acrobat: the 12th flip crosses HOT_LIMIT
+            send(service="session_start", params={"bribe": "1"})
+            for n in ("10", "3"):
+                tx = send(
+                    service="do_forward_flips",
+                    params={
+                        "forward_soberness_check": "0x12",
+                        "num_flips": n
+                    })
+                self.assertEqual(tx["response"]["kind"], "positive")
+            # the hot ECU refuses flips but still serves its fault memory
+            tx = send(raw="ba 12 01")
+            self.assertEqual(tx["response"]["coding_object"], "too_hot")
+
+            tx = send(service="read_dtc_by_status_mask", params={"status_mask": "0xff"})
+            self.assertEqual(tx["request"]["hex"], "1902ff")
+            resp = tx["response"]
+            self.assertEqual(resp["kind"], "positive")
+            self.assertEqual(resp["params"]["status_availability_mask"], 0xFF)
+            (record,) = resp["params"]["dtc_records"]
+            self.assertEqual(record["dtc"]["trouble_code"], 0x010001)
+            self.assertEqual(record["dtc"]["text"], "Acrobat overheated")
+            self.assertEqual(record["status"]["test_failed"], 1)
+            self.assertEqual(record["status"]["pending_dtc"], 1)
+            self.assertEqual(record["status"]["confirmed_dtc"], 1)
+            self.assertEqual(record["status"]["warning_indicator_requested"], 0)
+            self.assertEqual(resp["hex"], "5902ff0100010d")
+            self.assertIn("dtc_records[0].dtc", [s["param"] for s in resp["spans"]])
+
+            tx = send(raw="19 04 01 00 01 01")
+            self.assertEqual(tx["service"], "read_dtc_snapshot")
+            resp = tx["response"]
+            self.assertEqual(resp["kind"], "positive")
+            self.assertEqual(resp["params"]["dtc"]["text"], "Acrobat overheated")
+            snapshot = resp["params"]["snapshot"]
+            self.assertEqual(snapshot["temperature"], 66)
+            self.assertEqual(snapshot["total_flips"], 12)
+            self.assertGreater(snapshot["dizziness"], 0)
+            # unknown DTC: requestOutOfRange
+            tx = send(raw="19 04 01 00 02 01")
+            self.assertEqual(tx["response"]["hex"], "7f1931")
+            self.assertEqual(tx["response"]["nrc"]["name"], "RequestOutOfRange")
+
+            events = self.client.get("/api/live/poll").json()["ecu"]["fault_memory"]["events"]
+            self.assertEqual([(e["kind"], e["trouble_code"]) for e in events],
+                             [("stored", 0x010001)])
+
+            tx = send(service="clear_dtcs")
+            self.assertEqual((tx["request"]["hex"], tx["response"]["hex"]), ("14ffffff", "54"))
+            tx = send(service="read_dtc_by_status_mask", params={"status_mask": "0xff"})
+            self.assertEqual(tx["response"]["params"]["dtc_records"], [])
+        finally:
+            assert self.server._live is not None
+            self.server._live.close()
+            self.server._live = None
+
+    def test_fault_triggers(self) -> None:
+        st = self.client.post(
+            "/api/live/start", json={
+                "db": "somersault_dtc.pdx",
+                "layer": "somersault_assiduous"
+            }).json()
+
+        def send(**body: Any) -> Any:
+            return self.client.post("/api/live/send", json=body).json()
+
+        try:
+            send(service="session_start", params={"bribe": "1"})
+            tx = send(
+                service="do_backward_flips",
+                params={
+                    "backward_soberness_check": "0x12",
+                    "num_flips": "10"
+                })
+            self.assertEqual(tx["response"]["params"]["reason"], 1)
+            self.client.post(f"/api/live/rest?session={st['session']}")
+            send(service="session_start", params={"bribe": "1"})
+            send(service="set_operation_params", params={"use_fire_ring": "true"})
+            tx = send(
+                service="do_forward_flips",
+                params={
+                    "forward_soberness_check": "0x42",
+                    "num_flips": "1"
+                })
+            self.assertEqual(tx["response"]["kind"], "negative")
+            tx = send(raw="19 02 ff")
+            self.assertEqual([(r["dtc"]["trouble_code"], r["dtc"]["text"])
+                              for r in tx["response"]["params"]["dtc_records"]],
+                             [(0x010002, "Flip aborted – too dizzy"),
+                              (0x010003, "Fire ring malfunction")])
+            # resetting the ECU wipes its fault memory
+            self.client.post(f"/api/live/reset?session={st['session']}")
+            tx = send(raw="19 02 ff")
+            self.assertEqual(tx["response"]["params"]["dtc_records"], [])
+        finally:
+            assert self.server._live is not None
+            self.server._live.close()
+            self.server._live = None
+
 
 if __name__ == "__main__":
     unittest.main()
