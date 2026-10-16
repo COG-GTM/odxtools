@@ -590,12 +590,15 @@ const FM_RECIPES = [
       const setRing = v => sendLive({service: "set_operation_params", params: {use_fire_ring: String(v)}});
       // the ECU refuses set_operation_params once it is too hot, so restore the ring before the last flips
       let lit = ring && !prev;
+      const seen = (S.ecu.fault_memory?.events || []).length;
+      const stored = () => (S.ecu?.fault_memory?.events || []).slice(seen).some(ev => ev.kind === "stored");
       if (lit) await setRing(true);
       try {
         const until = Date.now() + 120000;
         while (S.ecu && Date.now() < until) {
           const e = S.ecu, lim = e.limits;
-          if (e.temperature > lim.temperature) return;
+          // stop once a burst crossed the limit, even if the acrobat already cooled back under it
+          if (e.temperature > lim.temperature || stored()) return;
           let n;
           if (lit) {
             n = Math.floor((lim.temperature - 0.5 - e.temperature) / 4);
@@ -628,7 +631,7 @@ async function fmProvoke(r) {
     fmProgress(`<span class="tag model">MODELED</span> ${esc(r.title)}: ${esc(r.what.toLowerCase())}…`);
     await fmReady(); await r.run(); await poll();
     const ev = (S.ecu?.fault_memory?.events || []).slice(before).filter(e => e.kind === "stored");
-    fmProgress(ev.length ? `<span class="tag model">MODELED</span> the ECU stored ${ev.map(e => `<b class="mono">${esc(fmHex(e.trouble_code))}</b>`).join(", ")}: ${esc(ev[ev.length - 1].trigger)}. Press <b>Read DTCs</b> to fetch it over UDS.` : `<span class="tag model">MODELED</span> no new fault was stored.`);
+    fmProgress(ev.length ? `<span class="tag model">MODELED</span> the ECU stored ${[...new Set(ev.map(e => e.trouble_code))].map(c => `<b class="mono">${esc(fmHex(c))}</b>`).join(", ")}: ${esc(ev[ev.length - 1].trigger)}. Press <b>Read DTCs</b> to fetch it over UDS.` : `<span class="tag model">MODELED</span> no new fault was stored.`);
   } catch (e) { fmProgress(`<span class="err">${esc(r.title)} stopped: ${esc(e.message)}</span>`); } finally { FM.busy = false; fmSetBusy(); }
 }
 function fmSetBusy() { const off = FM.busy || !fmHasFaults(fmLayer()); ["#fmRead", "#fmClear", "#fmProvoke"].forEach(id => $(id).disabled = off); }
