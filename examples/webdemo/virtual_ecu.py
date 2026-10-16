@@ -269,7 +269,10 @@ class SomersaultBehavior:
             # ISO 14229-1: an already unlocked ECU answers with an all-zero seed
             self._security_seed = None
             return self._pos(service, raw_req, security_seed=bytes(4))
-        self._security_seed = os.urandom(4)
+        # an all-zero seed is reserved for "already unlocked"
+        self._security_seed = bytes(4)
+        while self._security_seed == bytes(4):
+            self._security_seed = os.urandom(4)
         return self._pos(service, raw_req, security_seed=self._security_seed)
 
     def _on_security_send_key(self, service: Any, raw_req: bytes, params: dict[str, Any]) -> bytes:

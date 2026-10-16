@@ -627,7 +627,8 @@ $("#secCompute").onclick = secCompute;
 $("#secSend").onclick = secAction(() => secSendKey(Sec.key, false));
 $("#secWrong").onclick = secAction(async () => {
   if (!Sec.seed || Sec.seedUsed) { await secRequestSeed(); await sleep(400); }
-  const base = Sec.seed && Sec.seed.some(x => x) ? demoKey(Sec.seed).key : [0, 0, 0, 0];
+  if (!Sec.seed || !Sec.seed.some(x => x)) return;
+  const base = demoKey(Sec.seed).key;
   Sec.calc = null; secAlgoHtml();
   await secSendKey(base.map((b, i) => i === 3 ? b ^ 0xff : b), true);
 });
