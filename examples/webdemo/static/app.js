@@ -654,8 +654,11 @@ $("#fmClear").onclick = () => fmBusy(async () => {
   const res = await fmSend({service: "clear_dtcs"}, "Clear DTCs · 0x14");
   if (!res) return;
   const {tx} = res;
-  if (tx?.response?.kind === "positive") { S.fm.read = true; S.fm.records = []; fmRenderCards(); }
-  else fmRenderCards(fmNrcHtml(tx));
+  if (tx?.response?.kind !== "positive") { fmRenderCards(fmNrcHtml(tx)); return; }
+  S.fm.read = true; S.fm.records = []; fmRenderCards();
+  // faults which are still present are stored again right away: re-read
+  await sleep(400);
+  await fmRead();
 });
 
 function fmCloseDrawer() { S.fm.sel = null; $("#fmDrawer").hidden = true; $$("#fmCards .fm-card").forEach(c => c.classList.remove("sel")); }
