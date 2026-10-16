@@ -460,9 +460,9 @@ const FM_PROVOKE = [
   {id: "overheat", title: "Overheat the acrobat", detail: "13 forward flips (10 + 3) push the temperature over the limit", needs: ["do_forward_flips"],
     steps: [{service: "do_forward_flips", params: {forward_soberness_check: "0x12", num_flips: "10"}}, {service: "do_forward_flips", params: {forward_soberness_check: "0x12", num_flips: "3"}}]},
   {id: "dizzy", title: "Flip while dizzy", detail: "10 backward flips: the ECU refuses the 10th one for dizziness", needs: ["do_backward_flips"],
-    steps: [{service: "do_backward_flips", params: {backward_soberness_check: "0x12", num_flips: "10"}}]},
+    steps: [{service: "do_backward_flips", params: {backward_soberness_check: "0x12", num_flips: "10"}, allowNeg: true}]},
   {id: "fire", title: "Fire-ring flip that fails", detail: "fire ring on, then a flip that fails its soberness check", needs: ["set_operation_params", "do_forward_flips"],
-    steps: [{service: "set_operation_params", params: {use_fire_ring: "true"}}, {service: "do_forward_flips", params: {forward_soberness_check: "0x42", num_flips: "1"}},
+    steps: [{service: "set_operation_params", params: {use_fire_ring: "true"}}, {service: "do_forward_flips", params: {forward_soberness_check: "0x42", num_flips: "1"}, allowNeg: true},
       {service: "set_operation_params", params: {use_fire_ring: "false"}}]},
 ];
 
@@ -564,9 +564,15 @@ async function fmProvoke(p) {
       if (st.rest) {
         try { await api(`/api/live/rest?session=${S.live.session}`, {method: "POST"}); } catch (e) { addTxError(e.message); }
         await poll();
-      } else if (!await sendLive({service: st.service, params: st.params})) {
-        prog.innerHTML = `<span class="tag model">MODELED</span> ${esc(p.title)} stopped at <b>${esc(st.service)}</b>: the ECU request failed (see Live ECU).`;
-        return;
+      } else {
+        const tx = await sendLive({service: st.service, params: st.params});
+        const kind = tx?.response?.kind;
+        const why = !tx ? "the request failed" : tx.blocked ? "the ODX state chart blocked it" : !tx.response ? "no response from the ECU"
+          : kind !== "positive" && !(st.allowNeg && kind === "negative") ? "the ECU rejected it" : "";
+        if (why) {
+          prog.innerHTML = `<span class="tag model">MODELED</span> ${esc(p.title)} stopped at <b>${esc(st.service)}</b>: ${esc(why)} (see Live ECU).`;
+          return;
+        }
       }
       await sleep(fmReduced() ? 50 : 350);
     }
