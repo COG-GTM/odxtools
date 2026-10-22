@@ -532,6 +532,11 @@ function secOnTx(t) {
     $("#pKeyNote").innerHTML = ok ? "accepted by ECU: <code>67 02</code>" : `rejected: ${esc(resp.nrc?.hex || "")} ${esc(resp.nrc?.name || resp.coding_object || "")}`;
     SEC.seed = null;
   }
+  if (t.service === "session_stop" && resp?.kind === "positive") {
+    SEC.seed = SEC.key = null;
+    secResetPipeline();
+    $("#pSeedNote").innerHTML = "session ended: ECU re-locked, request a new seed";
+  }
   if (t.service === SEC.prot) {
     $("#protLast").innerHTML = t.blocked ? `Last attempt: <b>blocked</b> by StateMachine in state <span class="mono">${esc(t.state_before)}</span>, nothing sent on the bus.`
       : `Last attempt: <span class="mono">${esc(spaced(t.request.hex))}</span> &rarr; <span class="mono">${esc(spaced(resp?.hex || ""))}</span> ${esc(resp?.coding_object || "")}`;
@@ -568,6 +573,7 @@ function secRender(st) {
   const live = st && secLive(), sec = live ? st.ecu.security : null;
   const chartState = live ? st.charts?.[SEC.chart] : null;
   const delay = sec?.delay_remaining || 0;
+  if (SEC.seed === 0 && sec?.locked) SEC.seed = null;
   const phase = !live ? "off" : SEC.busy === "key" && delay === 0 && chartState !== "unlocked" ? "unlocking" : delay > 0 ? "lockedout" : chartState === "unlocked" ? "unlocked" : "locked";
   $("#padlock").dataset.phase = phase; $("#lockState").dataset.v = phase;
   const C = 2 * Math.PI * 72;
