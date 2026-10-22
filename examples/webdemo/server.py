@@ -677,6 +677,18 @@ class LiveSession:
         self.transactions.append(tx)
         return tx
 
+    def gates(self) -> dict[str, bool]:
+        """Whether odxtools' StateMachine would currently allow each
+        service which has PRE-CONDITION-STATE-REFs."""
+        fsm = self.fsms.get(self.chart) if self.chart else None
+        out: dict[str, bool] = {}
+        for s in self.dl.services:
+            if fsm is None or s.request is None or not s.pre_condition_state_refs:
+                continue
+            out[s.short_name] = any(
+                r.applies(fsm, list(s.request.parameters), {}) for r in s.pre_condition_state_refs)
+        return out
+
     def status(self, after: int) -> dict[str, Any]:
         return {
             "db": self.db_name,
@@ -691,6 +703,7 @@ class LiveSession:
                 k: v.active_state.short_name
                 for k, v in self.fsms.items()
             },
+            "gates": self.gates(),
             "session": self.session_id,
             "frame_count": len(self.frames),
             "seq": max((x[-1]["seq"] for x in (self.frames, self.transactions) if x), default=0),

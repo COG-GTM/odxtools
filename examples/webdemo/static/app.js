@@ -57,6 +57,7 @@ async function openDb(name) {
   const lazy = ecus.find(l => l.state_charts.length); if (lazy) $("#liveLayer").value = lazy.name;
   updateLiveChartOptions();
   selectLayer(def.name);
+  renderSecurity();
 }
 
 // ---------------------------------------------------------------- overview
@@ -300,7 +301,7 @@ async function connectLive() {
 function adoptSession(st) {
   S.gen = (S.gen || 0) + 1; S.after = 0; S.live = st; S.frameTimes = []; S.lastTrans = null;
   if (st.chart && [...$("#liveChart").options].some(o => o.value === st.chart)) $("#liveChart").value = st.chart;
-  $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = "";
+  $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = ""; secResetView();
   $("#liveIds").innerHTML = `<span class="pill on">Connected</span> tester → ECU <code>${hex2(st.rx_id)}</code> · ECU → tester <code>${hex2(st.tx_id)}</code> · 500 kbit/s virtual CAN`;
   $("#liveStart").textContent = "Reconnect"; $("#liveReset").disabled = false;
   drawChart();
@@ -309,7 +310,7 @@ function adoptSession(st) {
 async function sendLive(body) {
   if (!S.live) await connectLive();
   try { const tx = await api("/api/live/send", {method: "POST", body}); await poll(); return tx; }
-  catch (e) { addTxError(e.message); }
+  catch (e) { addTxError(e.message); secAddError(e.message); }
 }
 $("#liveSend").onclick = () => sendLive({service: $("#liveSvc").value, params: formValues($("#liveForm"))});
 $("#liveSendRaw").onclick = () => sendLive({raw: $("#liveRaw").value});
@@ -325,23 +326,25 @@ async function poll() {
     $("#liveIds").innerHTML = `<span class="pill off">Disconnected</span> Another client replaced the live session (${esc(st.db)} / ${esc(st.layer)}). Connect or send to start a session for the selected ECU.`;
     $("#liveStart").textContent = "Connect"; $("#liveReset").disabled = true;
     $("#txlog").innerHTML = ""; $("#trace tbody").innerHTML = ""; $("#gauges").innerHTML = ""; $("#frameRate").textContent = "";
-    drawChart();
+    S.ecu = null; S.gates = {}; secResetView(); drawChart(); renderSecurity();
     return;
   }
   const seen = S.after, fresh = x => x.seq > seen, prevTrans = S.lastTrans;
   for (const f of st.frames.filter(fresh)) addFrame(f);
   for (const t of st.transactions.filter(fresh)) {
-    addTx(t);
+    addTx(t); secAddTx(t);
     if (!t.blocked && t.state_before && t.state_before !== t.state_after) S.lastTrans = {chart: t.chart, from: t.state_before, to: t.state_after, service: t.service};
   }
   const all = [...st.frames, ...st.transactions]; if (all.length) S.after = Math.max(S.after, ...all.map(x => x.seq));
   renderGauges(st.ecu);
+  S.gates = st.gates || {}; S.ecu = st.ecu;
   const chartsChanged = JSON.stringify(st.charts) !== JSON.stringify(S.live?.charts);
   if (chartsChanged) S.live = {...S.live, ...st};
   if (chartsChanged || S.lastTrans !== prevTrans) drawChart();
   S.live.chart = st.chart;
   const now = performance.now(); S.frameTimes = S.frameTimes.filter(t => now - t < 5000);
   $("#frameRate").textContent = `${st.frame_count} frames captured by passive sniffer · ${(S.frameTimes.length / 5).toFixed(1)} frames/s`;
+  renderSecurity();
 }
 
 function addFrame(f) {
@@ -385,29 +388,35 @@ function renderGauges(e) {
 function drawChart() {
   const l = liveLayerSummary(); const name = $("#liveChart").value;
   const sc = l?.state_charts.find(c => c.name === name);
-  if (!sc) { $("#chartSvg").innerHTML = `<div class="muted" style="padding:30px 0">This ECU variant defines no STATE-CHARTs.</div>`; $("#chartName").textContent = ""; return; }
+  if (!sc) { $("#chartSvg").innerHTML = `<div class="muted" style="padding:30px 0">This ECU variant defines no STATE-CHARTs.</div>`; $("#chartName").textContent = ""; renderSecurityChart(); return; }
   $("#chartName").textContent = `${sc.name} · start: ${sc.start}`;
-  const active = S.live?.charts?.[sc.name] || sc.start;
-  const W = 400, H = 360, cx = W / 2, cy = H / 2 + 6, R = 132;
+  $("#chartSvg").innerHTML = chartHtml(sc, S.live?.charts?.[sc.name] || sc.start, S.lastTrans);
+  renderSecurityChart();
+}
+
+// Renders a STATE-CHART; the transition that actually ran last (if any) is highlighted.
+function chartHtml(sc, active, lastTrans, opts = {}) {
+  const W = opts.w || 400, H = opts.h || 360, cx = W / 2, cy = H / 2 + 6, R = opts.r || 132;
   const pos = {}; sc.states.forEach((s, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / sc.states.length; pos[s] = [cx + R * Math.cos(a), cy + R * Math.sin(a)]; });
-  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9a9a9a"/></marker></defs>`;
+  const lt = lastTrans?.chart === sc.name && lastTrans.to === active ? lastTrans : null;
+  const ran = lt && sc.transitions.find(t => t.from === lt.from && t.to === lt.to && (!lt.service || t.services.includes(lt.service)));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9a9a9a"/></marker><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#000"/></marker></defs>`;
   for (const t of sc.transitions) {
     const [x1, y1] = pos[t.from], [x2, y2] = pos[t.to];
     const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len, bend = 30;
     const sx = x1 + dx / len * 34, sy = y1 + dy / len * 22, ex = x2 - dx / len * 36, ey = y2 - dy / len * 24;
     const mx = (sx + ex) / 2 + nx * bend, my = (sy + ey) / 2 + ny * bend;
-    const trig = t.services.length;
-    svg += `<path d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="${trig ? "#0078d6" : "#bdbdbd"}" stroke-width="${trig ? 1.5 : 1}" marker-end="url(#ar2)"/>`;
+    const trig = t.services.length, isRan = t === ran;
+    svg += `<path class="${isRan ? "ran" : ""}" d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="${isRan ? "#000" : trig ? "#0078d6" : "#bdbdbd"}" stroke-width="${isRan ? 2.6 : trig ? 1.5 : 1}" marker-end="url(#${isRan ? "ar3" : "ar2"})"/>`;
+    if (opts.labels) svg += `<text x="${mx + nx * 14}" y="${my + ny * 14 + 4}" font-size="11" text-anchor="middle" fill="${isRan ? "#000" : "#767676"}" font-weight="${isRan ? 600 : 400}">${esc(t.name)}</text>`;
   }
   for (const s of sc.states) {
     const [x, y] = pos[s], on = s === active;
-    svg += `<g><ellipse cx="${x}" cy="${y}" rx="44" ry="22" fill="${on ? "#000" : "#fff"}" stroke="${on ? "#000" : "#bdbdbd"}" stroke-width="1.2"></ellipse>
+    svg += `<g class="state${on ? " on" : ""}"><ellipse cx="${x}" cy="${y}" rx="44" ry="22" fill="${on ? "#000" : "#fff"}" stroke="${on ? "#000" : "#bdbdbd"}" stroke-width="1.2"></ellipse>
       <text x="${x}" y="${y + 4}" font-size="11.5" text-anchor="middle" fill="${on ? "#fff" : "#333"}" font-weight="${on ? 600 : 400}">${esc(s)}</text></g>`;
   }
-  const lt = S.lastTrans?.chart === sc.name && S.lastTrans.to === active ? S.lastTrans : null;
-  const ran = lt && sc.transitions.find(t => t.from === lt.from && t.to === lt.to && (!lt.service || t.services.includes(lt.service)));
-  const rows = sc.transitions.map(t => `<tr${t === ran ? ' class="cur"' : ""}><td>${esc(t.name)}</td><td class="mono">${esc(t.from)} &rarr; ${esc(t.to)}</td><td class="mono">${esc([...new Set(t.services)].join(", ") || "\u2013")}</td></tr>`).join("");
-  $("#chartSvg").innerHTML = svg + `</svg><table class="transitions"><tr><th>Transition</th><th>States</th><th>Triggered by</th></tr>${rows}</table>`;
+  const rows = sc.transitions.map(t => `<tr${t === ran ? ' class="cur"' : ""}><td>${esc(t.name)}${t === ran ? ' <span class="badge req">ran</span>' : ""}</td><td class="mono">${esc(t.from)} &rarr; ${esc(t.to)}</td><td class="mono">${esc([...new Set(t.services)].join(", ") || "\u2013")}</td></tr>`).join("");
+  return svg + `</svg><table class="transitions"><tr><th>Transition</th><th>States</th><th>Triggered by</th></tr>${rows}</table>`;
 }
 
 // ---------------------------------------------------------------- scenario
@@ -442,9 +451,217 @@ $("#liveScenario").onclick = async () => {
   } finally { btn.disabled = false; }
 };
 
+// ---------------------------------------------------------------- security access (UDS 0x27)
+// MODELED demo algorithm, not a real OEM algorithm: key = rotl32(seed ^ 0x5A5A5A5A, 3)
+const SEC_MASK = 0x5A5A5A5A;
+const u32 = n => n >>> 0;
+const rotl32 = (x, r) => u32((x << r) | (x >>> (32 - r)));
+const demoKey = seed => rotl32(u32(seed ^ SEC_MASK), 3);
+const bytes4 = n => [24, 16, 8, 0].map(s => (u32(n) >>> s) & 0xff);
+const h2 = b => b.toString(16).toUpperCase().padStart(2, "0");
+const hex32 = n => "0x" + u32(n).toString(16).toUpperCase().padStart(8, "0");
+const NRC_INFO = {
+  0x12: ["SubFunctionNotSupported", "The ECU does not support this sub-function."],
+  0x13: ["IncorrectMessageLengthOrInvalidFormat", "The telegram length does not match the ODX request."],
+  0x22: ["ConditionsNotCorrect", "Preconditions of the ECU are not met."],
+  0x24: ["RequestSequenceError", "A key was sent without a preceding seed request."],
+  0x31: ["RequestOutOfRange", "A parameter is out of range."],
+  0x33: ["SecurityAccessDenied", "The service requires a security level that is not unlocked."],
+  0x35: ["InvalidKey", "The key does not match the seed under the demo algorithm."],
+  0x36: ["ExceededNumberOfAttempts", "Third wrong key: the ECU starts its modeled 10 s delay."],
+  0x37: ["RequiredTimeDelayNotExpired", "The lockout delay is still running; the request was refused."],
+};
+S.sec = {seed: null, key: null, keyWrong: false, computed: false, sent: false, pending: false, result: null, v: 0};
+S.gates = {};
+
+function secLayer() { return S.summary?.layers.find(l => l.state_charts.some(c => c.name === "security_chart")) || null; }
+function secConnected() { const l = secLayer(); return !!(l && S.live && S.live.layer === l.name); }
+function secChartState() { return secConnected() ? (S.live?.charts?.security_chart || "locked") : null; }
+
+async function secConnect() {
+  const l = secLayer(); if (!l) { renderSecurity(); return; }
+  if (secConnected()) return;
+  $("#liveLayer").value = l.name; updateLiveChartOptions(); $("#liveChart").value = "security_chart";
+  await connectLive();
+}
+async function secEnsure() { if (!secConnected()) await secConnect(); return secConnected(); }
+
+function secResetView() {
+  S.sec = {seed: null, key: null, keyWrong: false, computed: false, sent: false, pending: false, result: null, v: (S.sec?.v || 0) + 1};
+  S.secLastProt = null; S.secSteps = 0;
+  const tl = $("#secTimeline"); if (tl) tl.innerHTML = "";
+  renderPipeline();
+}
+
+function secNote(msg, bad) { const n = $("#secNote"); n.textContent = msg || ""; n.classList.toggle("bad", !!bad); }
+
+function nrcOf(resp) {
+  const p = resp.params || {};
+  const code = Number(p.response_code ?? p.nrc ?? parseInt(resp.hex.slice(4, 6), 16));
+  const info = NRC_INFO[code] || [resp.coding_object || "NegativeResponse", ""];
+  const odxName = resp.coding_object && !resp.coding_object.includes("not in ODX") ? resp.coding_object : null;
+  return {code, name: odxName || info[0], desc: info[1], odx: !!odxName};
+}
+
+function secAddTx(t) {
+  const layer = secLayer(); if (!layer || !S.live || S.live.layer !== layer.name) return;
+  const resp = t.response, ok = resp && resp.kind === "positive";
+  if (t.service === "security_request_seed" && ok) {
+    const seed = Number(resp.params.seed);
+    S.sec = {seed, key: null, keyWrong: false, computed: false, sent: false, pending: seed !== 0, result: seed === 0 ? "zero" : null, v: S.sec.v + 1};
+    renderPipeline();
+  } else if (t.service === "security_send_key" && resp) {
+    const n = ok ? null : nrcOf(resp);
+    S.sec = {...S.sec, sent: true, result: ok ? "ok" : n, pending: !ok && n.code === 0x35, v: S.sec.v + 1};
+    renderPipeline();
+  } else if (t.service === "headstand") {
+    S.secLastProt = t;
+  } else if (t.service === "session_stop" || (t.service === "security_request_seed" && resp)) {
+    S.sec.pending = false;
+  }
+  const tl = $("#secTimeline"); tl.querySelector(".emptystate")?.remove();
+  const el = document.createElement("div"); el.className = "step";
+  const step = S.secSteps = (S.secSteps || 0) + 1;
+  const chg = t.state_before && t.state_before !== t.state_after ? `<span class="badge gnr">${esc(t.chart)}: ${esc(t.state_before)} &rarr; ${esc(t.state_after)}</span>` : "";
+  let respHtml;
+  if (t.blocked) {
+    respHtml = `<div class="blockedcard resp">Not sent. odxtools <code>StateMachine</code>: no PRE-CONDITION-STATE-REF of <b>${esc(t.service)}</b> applies in state <b>${esc(t.state_before)}</b> of <code>${esc(t.chart)}</code>.</div>`;
+  } else if (!resp) {
+    respHtml = `<div class="nrc resp"><span class="name">Timeout</span><span class="desc">The ECU did not answer.</span></div>`;
+  } else if (resp.kind === "positive") {
+    respHtml = `<div class="resp"><div class="dir"><span class="badge pos">${esc(resp.coding_object || "positive")}</span>ECU &rarr; tester</div>${bytesHtml(resp)}</div>`;
+  } else {
+    const n = nrcOf(resp);
+    respHtml = `<div class="nrc resp"><span class="hex">0x${esc(h2(n.code))}</span><span class="name">${esc(n.name)}</span><span class="badge neg">${n.odx ? "ODX NEG-RESPONSE" : esc(resp.kind.replace("_", " "))}</span><span class="desc">${esc(n.desc)}</span>${bytesHtml(resp)}</div>`;
+  }
+  el.innerHTML = `<div class="hd"><b>${step}. ${esc(t.service || t.request.coding_object || "raw telegram")}</b><span>${chg} <span class="muted small">${t.blocked ? "blocked" : `${esc(t.frames ?? "?")} CAN frames · ${esc(t.latency_ms)} ms`}</span></span></div>
+    <div class="dir"><span class="badge req">${esc(t.request.coding_object || "request")}</span>tester &rarr; ECU</div>${bytesHtml(t.request)}${respHtml}`;
+  tl.prepend(el);
+  while (tl.children.length > 40) tl.lastChild.remove();
+}
+function secAddError(msg) {
+  const tl = $("#secTimeline"); if (!tl) return; tl.querySelector(".emptystate")?.remove();
+  const el = document.createElement("div"); el.className = "step";
+  el.innerHTML = `<div class="nrc"><span class="name">Request failed</span><span class="desc">${esc(msg)}</span></div>`; tl.prepend(el);
+}
+
+function quad(n, cls = "", delay = 0) {
+  if (n == null) return `<div class="quad">${"<span class=\"b empty\">&ndash;</span>".repeat(4)}</div>`;
+  return `<div class="quad">${bytes4(n).map((b, i) => `<span class="b ${cls}" style="animation-delay:${delay + i * 110}ms">${h2(b)}</span>`).join("")}</div>`;
+}
+function renderPipeline() {
+  const el = $("#secPipe"); if (!el) return;
+  const c = S.sec, seed = c.seed, key = c.computed ? c.key : null;
+  const res = c.result;
+  let seedCap = "Press Request seed: <span class=\"mono\">27 01</span>";
+  if (res === "zero") seedCap = "All-zero seed: the ECU is already unlocked (ISO 14229-1)";
+  else if (seed != null) seedCap = `<span class="mono">67 01</span> security_seed · ${esc(hex32(seed))}`;
+  let algo = `<div class="formula">key = rotl32(seed &oplus; 0x5A5A5A5A, 3)</div><div class="cap">Request a seed, then press Compute key.</div>`;
+  if (c.computed && seed != null) {
+    const x = u32(seed ^ SEC_MASK), rows = [["seed", seed], ["&oplus; mask", SEC_MASK], ["= xor", x], ["rotl 3", demoKey(seed)]];
+    algo = `<div class="formula">key = rotl32(seed &oplus; 0x5A5A5A5A, 3)</div><table>${rows.map(([lab, v], r) =>
+      `<tr class="${r === 3 ? "res" : ""}"><td class="op">${lab}</td>${bytes4(v).map((b, i) => `<td><span class="c" style="animation-delay:${r * 260 + i * 70}ms">${h2(b)}</span></td>`).join("")}</tr>`).join("")}</table>`;
+  }
+  let keyCap = "Computed by the tester, sent as <span class=\"mono\">27 02</span>", keyCls = key != null ? "filled" : "";
+  if (c.computed && c.keyWrong) keyCap = "Deliberately wrong key (demo algorithm result with flipped bits)";
+  if (c.sent && res === "ok") { keyCap = "<span class=\"mono\">67 02</span> security_key_accepted"; keyCls = "ok"; }
+  else if (c.sent && res && res.code != null) { keyCap = `<span class="mono">7F 27 ${esc(h2(res.code))}</span> ${esc(res.name)}`; keyCls = "bad"; }
+  const keyDelay = c.computed && !c.keyWrong ? 3 * 260 + 200 : 0;
+  el.innerHTML = `
+    <div class="pbox ${seed != null ? "filled" : ""}"><div class="ttl">Seed (from ECU) <span class="tag real">REAL</span></div>${quad(res === "zero" ? 0 : seed)}<div class="cap">${seedCap}</div></div>
+    <div class="parrow ${c.computed ? "on" : ""}"></div>
+    <div class="pbox algo ${c.computed ? "filled" : ""}"><div class="ttl">Demo algorithm <span class="tag model">MODELED &ndash; demo algorithm, not a real OEM algorithm</span></div>${algo}</div>
+    <div class="parrow ${c.sent ? "on" : ""}"></div>
+    <div class="pbox ${keyCls}"><div class="ttl">Key (to ECU) <span class="tag real">REAL</span></div>${quad(key, c.keyWrong ? "wrong" : "", keyDelay)}<div class="cap">${keyCap}</div></div>`;
+}
+
+function secLockState() {
+  const e = S.ecu?.security;
+  if (!secConnected() || !e) return "locked";
+  if (e.delay_remaining > 0) return "locked-out";
+  if (secChartState() === "unlocked") return "unlocked";
+  if (S.sec.pending) return "unlocking";
+  return "locked";
+}
+function renderSecurityChart() {
+  const host = $("#secChart"); if (!host) return;
+  const l = secLayer(), sc = l?.state_charts.find(c => c.name === "security_chart");
+  if (!sc) { host.innerHTML = ""; return; }
+  const active = secChartState() || sc.start;
+  const key = JSON.stringify([active, S.lastTrans, secConnected()]);
+  if (host.dataset.k === key) return; host.dataset.k = key;
+  host.innerHTML = chartHtml(sc, active, secConnected() ? S.lastTrans : null, {w: 320, h: 300, r: 100, labels: true});
+}
+function renderSecurity() {
+  if (!$("#tab-security")) return;
+  const l = secLayer(), has = !!l, conn = secConnected();
+  $("#secRibbon").hidden = !has;
+  if (has) $("#secRibbonText").innerHTML = `<b>${esc(S.db)}</b> is generated by <code>examples/mksomersaultsecuritypdx.py</code>: it adds UDS 0x27 services and <code>security_chart</code> to <b>${esc(l.name)}</b>. The bundled PDX files are unchanged.`;
+  $("#secEmpty").hidden = has; $("#secBody").hidden = !has;
+  if (!has) { $("#secEmptyDb").textContent = S.db || "This database"; $("#secConnect").hidden = true; $("#secConn").textContent = ""; return; }
+  $("#secConnect").hidden = conn; $("#secConnect").textContent = `Connect to ${l.name}`;
+  $("#secConn").innerHTML = conn ? `<span class="pill on">Connected</span> ${esc(l.name)} · tester &rarr; ECU <code>${hex2(S.live.rx_id)}</code> · ECU &rarr; tester <code>${hex2(S.live.tx_id)}</code>` : `<span class="pill off">Not connected</span>`;
+  $$(".secbtns .btn, #secTry").forEach(b => b.disabled = !conn);
+  const tl = $("#secTimeline");
+  if (!tl.children.length) tl.innerHTML = `<div class="emptystate"><div class="empty-line"></div>${conn ? "No exchanges yet. Try headstand, or request a seed." : "Not connected. Connect to the ECU to start exchanging telegrams."}</div>`;
+
+  const ls = secLockState(), lock = $("#secLock");
+  if (!lock.classList.contains(ls)) {
+    lock.className = "lock " + ls;
+    const lab = $("#secLockLabel"); lab.textContent = {"locked": "Locked", "unlocking": "Unlocking", "unlocked": "Unlocked", "locked-out": "Locked out"}[ls];
+    lab.style.animation = "none"; void lab.offsetWidth; lab.style.animation = "";
+  }
+  const e = S.ecu?.security || {attempts: 0, max_attempts: 3, delay_remaining: 0, delay_total: 10};
+  $("#secLockSub").innerHTML = conn ? `security_chart: <b>${esc(secChartState())}</b>${ls === "unlocking" ? " · seed issued, waiting for key" : ""}` : "not connected";
+  const filled = e.delay_remaining > 0 ? e.max_attempts : e.attempts;
+  $$("#secDots i").forEach((d, i) => d.classList.toggle("on", i < filled));
+  const C = 163.36, frac = e.delay_total ? e.delay_remaining / e.delay_total : 0;
+  $("#secRing").style.strokeDashoffset = String(C * (1 - frac));
+  $("#secDelay").classList.toggle("idle", !(e.delay_remaining > 0));
+  $("#secDelayNum").textContent = e.delay_remaining > 0 ? `${Math.ceil(e.delay_remaining)} s` : "No lockout";
+  $("#secDelayTxt").textContent = e.delay_remaining > 0 ? "modeled delay: requests get 0x37" : `delay of ${e.delay_total} s after ${e.max_attempts} wrong keys`;
+
+  const gate = conn ? S.gates?.headstand : undefined, prot = $("#secProt");
+  const lp = S.secLastProt;
+  const last = lp ? (lp.blocked ? "Last try: blocked before sending" : lp.response?.kind === "positive" ? `Last try: <span class="mono">${esc(spaced(lp.response.hex))}</span> ${esc(lp.response.coding_object)}` : lp.response ? `Last try: ${esc(lp.response.coding_object)}` : "Last try: timeout") : "Not tried yet";
+  const cls = gate === true ? "allowed" : gate === false ? "blocked" : "";
+  const st = gate === true ? "headstand allowed" : gate === false ? "headstand blocked" : "headstand";
+  const why = gate === true ? "PRE-CONDITION-STATE-REF met: security_chart is <b>unlocked</b>" : gate === false ? `Chart precondition not met: needs security_chart <b>unlocked</b>, is <b>${esc(secChartState())}</b>` : "Connect to evaluate the ODX precondition";
+  const sig = cls + "|" + last + "|" + why;
+  if (prot.dataset.k !== sig) { prot.dataset.k = sig; prot.className = "prot " + cls; prot.innerHTML = `<div class="st">${st}</div><div class="why">${why}</div><div class="last">${last}</div>`; }
+  renderSecurityChart();
+}
+
+$("#secConnect").onclick = secConnect;
+$("#secOpenDemo").onclick = async () => {
+  const opt = [...$("#dbSelect").options].find(o => o.value === "somersault_security.pdx");
+  if (!opt) { secNote("somersault_security.pdx not found; run examples/mksomersaultsecuritypdx.py", true); return; }
+  $("#dbSelect").value = opt.value; await openDb(opt.value);
+};
+$("#secSeed").onclick = async () => { if (await secEnsure()) { secNote(""); await sendLive({service: "security_request_seed", params: {}}); } };
+function secCompute(wrong) {
+  const seed = S.sec.seed;
+  if (seed == null) { secNote(wrong ? "No seed: sending an arbitrary wrong key" : "Request a seed first.", !wrong); if (!wrong) return false; }
+  const key = seed == null ? 0xDEADBEEF : wrong ? u32(demoKey(seed) ^ 0x00FF00FF) : demoKey(seed);
+  S.sec = {...S.sec, key, keyWrong: !!wrong, computed: true, sent: false, result: null, v: S.sec.v + 1};
+  renderPipeline(); return true;
+}
+$("#secCompute").onclick = () => { if (secCompute(false)) secNote("Key computed by the tester with the demo algorithm."); };
+async function secSend(wrong) {
+  if (!(await secEnsure())) return;
+  if (wrong || !S.sec.computed || S.sec.keyWrong) { if (!secCompute(wrong)) return; if (!wrong) await sleep(1100); }
+  else secNote("");
+  await sendLive({service: "security_send_key", params: {key: hex32(S.sec.key)}});
+}
+$("#secSendKey").onclick = () => secSend(false);
+$("#secWrong").onclick = () => secSend(true);
+$("#secTry").onclick = async () => { if (await secEnsure()) await sendLive({service: "headstand", params: {duration: "3"}}); };
+$("#secStop").onclick = async () => { if (await secEnsure()) await sendLive({service: "session_stop", params: {}}); };
+
 loadDatabases().then(() => {
   const t = location.hash.slice(1); const b = $(`#tabs button[data-tab="${t}"]`); if (b) b.click();
   if (t === "compare") $("#cmpGo").click();
   if (t === "decode") decodeNow();
   if (t === "live") connectLive();
+  if (t === "security") secConnect();
 });

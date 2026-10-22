@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Diagnostic Workbench | Mercedes-Benz</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -28,6 +29,7 @@
   <button data-tab="overview" class="active">Overview</button>
   <button data-tab="services">Service Inspector</button>
   <button data-tab="live">Live Virtual ECU</button>
+  <button data-tab="security">Security Access</button>
   <button data-tab="decode">Decoder</button>
   <button data-tab="compare">Compare</button>
 </nav>
@@ -97,6 +99,83 @@
     <div class="card">
       <h2>CAN bus trace <span id="frameRate" class="muted small"></span></h2>
       <div class="tracewrap"><table id="trace"><thead><tr><th>#</th><th>t [ms]</th><th>CAN ID</th><th>Node</th><th>ISO-TP</th><th>Data</th><th>Reassembled telegram</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-security" class="tab">
+    <div id="secRibbon" class="ribbon" hidden><span class="tag">Demo PDX extension</span> <span id="secRibbonText"></span></div>
+    <div class="card sechead">
+      <div class="sechead-top">
+        <div>
+          <h2 class="sec-title">Security Access</h2>
+          <p class="lede">UDS <code>0x27</code> seed/key: the ECU keeps <b>headstand</b> locked until the tester answers a random seed with the matching key, and an ODX state chart decides when it may run.</p>
+        </div>
+        <div class="row"><button id="secConnect" class="btn">Connect</button><span id="secConn" class="muted small"></span></div>
+      </div>
+      <div class="honesty"><span class="tag real">REAL</span> odxtools decode of every <code>27 xx</code> telegram · ODX <code>security_chart</code> + PRE-CONDITION-STATE-REF evaluated by odxtools <code>StateMachine</code> · CAN / ISO-TP transport
+        &nbsp;&nbsp;<span class="tag model">MODELED</span> ECU physics (attempt counter, 10 s delay timer) · demo key algorithm</div>
+    </div>
+    <div id="secEmpty" class="card empty" hidden>
+      <div class="empty-line"></div>
+      <h3>No SecurityAccess in this database</h3>
+      <p class="muted"><span id="secEmptyDb"></span> defines no UDS 0x27 services and no <code>security_chart</code>. The demo PDX extension adds both.</p>
+      <button id="secOpenDemo" class="btn">Open somersault_security.pdx</button>
+    </div>
+    <div id="secBody">
+      <div class="secgrid-a">
+        <div class="card lockcard">
+          <h3>ECU security state</h3>
+          <div id="secLock" class="lock locked">
+            <svg viewBox="0 0 120 150" aria-hidden="true">
+              <g class="shackle"><path d="M36,70 V44 a24,24 0 0 1 48,0 V70" fill="none" stroke-width="7" stroke-linecap="square"/></g>
+              <rect class="body" x="18" y="68" width="84" height="70" fill="#fff" stroke-width="3"/>
+              <circle class="hole" cx="60" cy="97" r="7" fill="none" stroke-width="3"/><path class="hole" d="M60,104 V118" stroke-width="3"/>
+            </svg>
+          </div>
+          <div id="secLockLabel" class="locklabel"></div>
+          <div id="secLockSub" class="muted small locksub"></div>
+          <div class="attempts"><span class="muted small">Wrong keys</span><span id="secDots" class="dots"><i></i><i></i><i></i></span></div>
+          <div id="secDelay" class="delay">
+            <svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="26" class="track"/><circle cx="32" cy="32" r="26" class="ring" id="secRing"/></svg>
+            <div><div id="secDelayNum" class="delaynum"></div><div id="secDelayTxt" class="muted small"></div></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Seed &rarr; key pipeline</h3>
+          <div id="secPipe" class="pipe"></div>
+          <ol class="howto">
+            <li><b>Request seed.</b> <span class="mono">27 01</span> asks the ECU for a fresh random 4-byte seed (<span class="mono">67 01 &hellip;</span>).</li>
+            <li><b>Compute key.</b> The tester runs the demo algorithm on the seed. Real ECUs use secret OEM algorithms, none of which is used here.</li>
+            <li><b>Send key.</b> <span class="mono">27 02 &lt;key&gt;</span>. A wrong key costs an attempt; after three the ECU locks out for 10 s.</li>
+            <li><b>Unlock.</b> On <span class="mono">67 02</span> odxtools takes the ODX transition <code>locked &rarr; unlocked</code>, and the precondition on headstand is met.</li>
+          </ol>
+        </div>
+      </div>
+      <div class="secgrid-b">
+        <div class="card">
+          <h3>Tester</h3>
+          <div class="secbtns">
+            <button id="secSeed" class="btn">Request seed <span class="mono">27 01</span></button>
+            <button id="secCompute" class="btn ghost">Compute key</button>
+            <button id="secSendKey" class="btn">Send key <span class="mono">27 02</span></button>
+            <button id="secWrong" class="btn ghost">Send wrong key</button>
+            <button id="secStop" class="btn ghost wide">End session <span class="mono">10 01</span></button>
+          </div>
+          <div id="secNote" class="secnote muted small"></div>
+          <h3>Protected service</h3>
+          <div id="secProt" class="prot"></div>
+          <button id="secTry" class="btn accent">Try headstand</button>
+        </div>
+        <div class="card">
+          <h2>Exchanges <span class="muted small">every telegram as sent over CAN, coloured by ODX parameter</span></h2>
+          <div id="secTimeline" class="timeline"></div>
+        </div>
+        <div class="card">
+          <h2>security_chart <span class="tag real">REAL</span></h2>
+          <div id="secChart"></div>
+          <div class="muted small" style="margin-left:0">The <code>unlock</code> arrow is drawn bold only after <code>security_send_key</code> was accepted and the odxtools <code>StateMachine</code> took it.</div>
+        </div>
+      </div>
     </div>
   </section>
 
