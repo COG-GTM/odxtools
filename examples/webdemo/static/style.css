@@ -239,3 +239,12 @@ svg text{font-family:var(--sans)}
 @media (prefers-reduced-motion:reduce){.sec *,.sec *:before,.sec *:after,#chartSvg *{transition:none!important;animation:none!important}}
 .pbox.algo .ph{flex-direction:column;gap:6px}
 .pbox.algo .ph .tag{text-align:left}
+/* Security Access palette: monochrome, blue for interaction, red only for negative responses */
+.sec .tag.real,.sec .pill.on,.sec .badge.pos,.sec .badge.gnr{border-color:#000;color:#000}
+.sec .tag.model{border-color:#9a9a9a;color:var(--muted)}
+.sec .xch.pos{border-left-color:#000}
+.sec .xch.blocked{border-left-color:#9a9a9a;border-left-style:dashed}
+.sec .blockcard{border:1px dashed #9a9a9a;color:var(--text2)}
+.sec .pbox.ok{border-color:#000}.sec .pbox.ok .pnote{color:var(--text)}
+.padlock[data-phase="unlocked"] .body,.padlock[data-phase="unlocked"] .shackle path,.padlock[data-phase="unlocked"] .keyhole *{stroke:#000}
+.lockstate>[data-v="unlocked"]{color:var(--text)}

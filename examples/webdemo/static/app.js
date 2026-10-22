@@ -582,7 +582,7 @@ function secRender(st) {
   if (pre) $("#protPre").textContent = "PRE-CONDITION-STATE-REF " + pre.map(r => `${r.chart} = ${r.state}`).join(" or ");
   $("#secConn").innerHTML = live ? `<span class="pill on">Connected</span> ${esc(SEC.layer)} &middot; ${esc(SEC.chart)}` : `<span class="pill off">Not connected</span>`;
   $("#secConnect").textContent = live ? "Reconnect" : "Connect";
-  $("#secCompute").disabled = SEC.seed === null || !!SEC.busy;
+  $("#secCompute").disabled = !SEC.seed || !!SEC.busy;
   $("#secSendKey").disabled = $("#secWrong").disabled = $("#secSeed").disabled = !!SEC.busy;
   const sc = secLayer().state_charts.find(c => c.name === SEC.chart);
   const active = chartState || sc?.start, sig = JSON.stringify([active, S.lastTrans, live]);
@@ -593,8 +593,13 @@ function secRender(st) {
   }
 }
 
+function secZeroSeedNote() {
+  $("#pKey").classList.remove("active", "bad"); $("#pKey").classList.add("ok");
+  $("#pKeyNote").textContent = "no key needed: the all-zero seed means the ECU is already unlocked";
+}
 async function secCompute(wrong = false) {
   if (SEC.seed === null) return;
+  if (SEC.seed === 0) { secZeroSeedNote(); return; }
   const seed = SEC.seed, x = (seed ^ DEMO_MASK) >>> 0;
   SEC.key = wrong ? (demoKey(seed) ^ 0xFFFFFFFF) >>> 0 : demoKey(seed); SEC.wrong = wrong;
   $("#pSeed").classList.remove("active"); $("#pAlgo").classList.add("active");
@@ -620,6 +625,7 @@ async function secSendKey(wrong = false) {
         await secStep(250);
       }
       if (SEC.seed === null) return;
+      if (SEC.seed === 0) { secZeroSeedNote(); return; }
       await secCompute(wrong);
     }
     if (!wrong) { $("#padlock").dataset.phase = "unlocking"; $("#lockState").dataset.v = "unlocking"; }
