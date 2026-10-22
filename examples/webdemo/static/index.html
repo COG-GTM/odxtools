@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Diagnostic Workbench | Mercedes-Benz</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -21,6 +22,7 @@
     <label>Database</label>
     <select id="dbSelect"></select>
     <label class="btn ghost" title="Load your own .pdx file">Upload PDX<input id="upload" type="file" accept=".pdx" hidden></label>
+    <span id="demoTag" class="demo-tag" hidden>Demo PDX extension</span>
     <span id="loadInfo" class="muted"></span>
   </div>
 </header>
@@ -28,6 +30,7 @@
   <button data-tab="overview" class="active">Overview</button>
   <button data-tab="services">Service Inspector</button>
   <button data-tab="live">Live Virtual ECU</button>
+  <button data-tab="security">Security Access</button>
   <button data-tab="decode">Decoder</button>
   <button data-tab="compare">Compare</button>
 </nav>
@@ -97,6 +100,85 @@
     <div class="card">
       <h2>CAN bus trace <span id="frameRate" class="muted small"></span></h2>
       <div class="tracewrap"><table id="trace"><thead><tr><th>#</th><th>t [ms]</th><th>CAN ID</th><th>Node</th><th>ISO-TP</th><th>Data</th><th>Reassembled telegram</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-security" class="tab sa">
+    <div id="saRibbon" class="sa-ribbon" hidden><span class="lbl">Demo PDX extension</span><span class="txt"><b id="saRibbonDb"></b> adds UDS 0x27 SecurityAccess, a <code>security_chart</code> and a pre-condition on <code>headstand</code> to the bundled somersault ECU. Not part of the original somersault.pdx.</span></div>
+    <div class="card sa-head">
+      <div class="sa-title">
+        <div>
+          <h2 class="sa-h">Security Access</h2>
+          <p class="sa-lede">A protected service stays locked until the tester answers the ECU&rsquo;s seed with the matching key &mdash; real UDS <span class="mono">0x27</span>, gated by an ODX state chart.</p>
+        </div>
+        <div id="saConn" class="sa-conn"></div>
+      </div>
+      <div class="row sa-controls">
+        <button id="saSeed" class="btn">Request seed</button>
+        <button id="saCompute" class="btn ghost">Compute key</button>
+        <button id="saSend" class="btn">Send key</button>
+        <button id="saWrong" class="btn ghost">Send wrong key</button>
+        <button id="saTry" class="btn accent">Try headstand</button>
+        <span class="sa-sep"></span>
+        <button id="saStop" class="btn ghost" title="session_stop re-locks the ECU (unlocked &rarr; locked)">End session</button>
+        <button id="saReset" class="btn ghost">Reset ECU</button>
+      </div>
+      <div class="honesty"><span class="tag real">REAL</span> odxtools decode &middot; ODX state chart (<code>StateMachine</code>) &middot; CAN / ISO-TP
+        &nbsp;&nbsp;<span class="tag model">MODELED</span> ECU physics &middot; demo key algorithm</div>
+    </div>
+    <div id="saEmpty" class="card sa-empty" hidden>
+      <div class="sa-illu" aria-hidden="true"><i></i><span></span><i></i></div>
+      <h2>No SecurityAccess in this database</h2>
+      <p class="muted">The selected PDX defines no ECU variant with a <code>SECURITY</code> state chart and the <code>security_request_seed</code> / <code>security_send_key</code> services. The demo extension adds one on top of the bundled somersault ECU.</p>
+      <button id="saOpenDemo" class="btn">Open somersault_security.pdx</button>
+    </div>
+    <div id="saBody">
+      <div class="sa-top">
+        <div class="card sa-lock">
+          <div class="sa-cardhd"><h3>ECU lock state</h3><span class="tag model">MODELED</span></div>
+          <div id="saPad" class="pad locked">
+            <svg viewBox="0 0 120 132" aria-label="padlock">
+              <path class="shackle" d="M36,92 V42 a24,24 0 0 1 48,0 V62"/>
+              <rect class="body" x="20" y="60" width="80" height="62"/>
+              <circle class="hole" cx="60" cy="86" r="7"/><path class="hole" d="M60,92 V104"/>
+              <path class="cross" d="M44,74 L76,108 M76,74 L44,108"/>
+            </svg>
+          </div>
+          <div id="saState" class="sa-state">Locked</div>
+          <div id="saStateSub" class="muted small sa-statesub"></div>
+          <div class="sa-meters">
+            <div><div class="sa-lab">Wrong keys</div><div id="saDots" class="sa-dots"><i></i><i></i><i></i></div></div>
+            <div class="sa-ringwrap"><div class="sa-lab">Lockout delay</div>
+              <div id="saRing" class="sa-ring idle"><svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="26"/><circle class="prog" cx="32" cy="32" r="26"/></svg><span id="saRingTxt">&ndash;</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="card sa-pipecard">
+          <div class="sa-cardhd"><h2>Seed &rarr; key</h2><span class="muted small">every byte below travelled as a real <span class="mono">27 xx</span> telegram</span></div>
+          <div class="sa-pipe">
+            <div id="saBoxSeed" class="sa-box"><div class="sa-boxhd">Seed <span class="muted">(from ECU)</span></div><div class="sa-cells"></div><div class="sa-boxft muted small">waiting for <span class="mono">67 01</span></div></div>
+            <div class="sa-link"></div>
+            <div id="saBoxAlgo" class="sa-box algo"><div class="sa-boxhd">Demo algorithm <span class="tag model">MODELED &ndash; demo algorithm, not a real OEM algorithm</span></div>
+              <div class="sa-formula mono">key = rotl32(seed &oplus; 0x5A5A5A5A, 3)</div>
+              <div class="sa-steps"></div></div>
+            <div class="sa-link"></div>
+            <div id="saBoxKey" class="sa-box"><div class="sa-boxhd">Key <span class="muted">(to ECU)</span></div><div class="sa-cells"></div><div class="sa-boxft muted small">not computed</div></div>
+          </div>
+          <h3>Handshake</h3>
+          <ol id="saFlow" class="sa-flow"></ol>
+        </div>
+      </div>
+      <div class="sa-bottom">
+        <div class="card">
+          <div class="sa-cardhd"><h2>UDS exchanges</h2><span class="muted small">request / response byte strips, decoded by odxtools <span class="tag real">REAL</span></span></div>
+          <div id="saLog" class="sa-log"></div>
+        </div>
+        <div class="sa-side">
+          <div class="card" id="saProtected"></div>
+          <div class="card"><div class="sa-cardhd"><h2>security_chart</h2><span class="tag real">REAL</span></div><div id="saChart"></div>
+            <div class="muted small" style="margin:0">Highlighted transitions actually ran in <code>odxtools.statemachine.StateMachine</code>.</div></div>
+        </div>
+      </div>
     </div>
   </section>
 

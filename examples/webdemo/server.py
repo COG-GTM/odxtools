@@ -329,13 +329,21 @@ def db_summary(name: str) -> dict[str, Any]:
                 } for m in rev.modifications],
             })
     return {
-        "name": name,
-        "load_time_ms": round(getattr(db, "_load_time_ms", 0.0), 1),
+        "name":
+            name,
+        "load_time_ms":
+            round(getattr(db, "_load_time_ms", 0.0), 1),
         "containers": [c.short_name for c in db.diag_layer_containers],
         "comparam_subsets": [c.short_name for c in db.comparam_subsets],
         "layers": [layer_summary(dl) for dl in db.diag_layers],
-        "revisions": revisions,
-        "auxiliary_files": sorted(db.auxiliary_files.keys()),
+        "revisions":
+            revisions,
+        "auxiliary_files":
+            sorted(db.auxiliary_files.keys()),
+        # demo-only databases which extend the bundled somersault ECU
+        # by a UDS 0x27 SecurityAccess state chart
+        "demo_extension":
+            any(sc.semantic == "SECURITY" for dl in db.diag_layers for sc in dl.state_charts),
     }
 
 
@@ -691,10 +699,29 @@ class LiveSession:
                 k: v.active_state.short_name
                 for k, v in self.fsms.items()
             },
+            "gates": self.gates(),
             "session": self.session_id,
             "frame_count": len(self.frames),
             "seq": max((x[-1]["seq"] for x in (self.frames, self.transactions) if x), default=0),
         }
+
+    def gates(self) -> dict[str, Any]:
+        """Evaluate the PRE-CONDITION-STATE-REFs of the services which do
+        not depend on request parameters against the active state chart."""
+        fsm = self.fsms.get(self.chart) if self.chart else None
+        if fsm is None:
+            return {}
+        out: dict[str, Any] = {}
+        for s in self.dl.services:
+            refs = s.pre_condition_state_refs
+            if not refs or s.request is None or any(
+                    r.in_param_if_snref or r.in_param_if_snpathref for r in refs):
+                continue
+            out[s.short_name] = {
+                "allowed": any(r.applies(fsm, list(s.request.parameters), {}) for r in refs),
+                "requires": [r.state.short_name for r in refs if r.state in fsm.state_chart.states],
+            }
+        return out
 
     def close(self) -> None:
         self.net.shutdown()
