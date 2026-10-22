@@ -750,6 +750,9 @@ and then opening `http://localhost:8000`. It offers:
   any diagnostic layer.
 - **Compare:** visualizes the result of the `compare` tool's
   `DiffEngine` for two PDX files.
+- **Security Access:** UDS `0x27` seed/key against a demo-only PDX
+  extension (`examples/somersault_security.pdx`) whose lock is an ODX
+  state chart. See [`examples/webdemo/README.md`](examples/webdemo/README.md).
 
 Custom PDX files can be uploaded via the UI.
 
