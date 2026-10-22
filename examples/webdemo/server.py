@@ -679,19 +679,23 @@ class LiveSession:
 
     def gates(self) -> dict[str, bool]:
         """Whether odxtools' StateMachine would currently allow each
-        service which has PRE-CONDITION-STATE-REFs. Services whose
-        preconditions depend on request parameter values are omitted,
-        since they can only be decided for a concrete request."""
+        service which has PRE-CONDITION-STATE-REFs. If the answer depends
+        on request parameter values, the service is omitted."""
         fsm = self.fsms.get(self.chart) if self.chart else None
         out: dict[str, bool] = {}
         for s in self.dl.services:
             refs = s.pre_condition_state_refs
             if fsm is None or s.request is None or not refs:
                 continue
-            if any(r.value is not None or r.in_param_if_snref is not None or
-                   r.in_param_if_snpathref is not None for r in refs):
-                continue
-            out[s.short_name] = any(r.applies(fsm, list(s.request.parameters), {}) for r in refs)
+            params = list(s.request.parameters)
+            free = [
+                r for r in refs if r.value is None and r.in_param_if_snref is None and
+                r.in_param_if_snpathref is None
+            ]
+            if any(r.applies(fsm, params, {}) for r in free):
+                out[s.short_name] = True
+            elif len(free) == len(refs):
+                out[s.short_name] = False
         return out
 
     def status(self, after: int) -> dict[str, Any]:
