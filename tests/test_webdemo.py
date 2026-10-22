@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: MIT
 import sys
+import tempfile
 import unittest
 from typing import Any
 from pathlib import Path
+
+import odxtools
+from odxtools.diagnostictroublecode import DiagnosticTroubleCode
 
 try:
     from fastapi.testclient import TestClient
@@ -171,6 +175,131 @@ class TestWebDemo(unittest.TestCase):
             # without a bribe the chart blocks the raw telegram, too
             tx = self.client.post("/api/live/send", json={"raw": "10 00 00 00"}).json()
             self.assertTrue(tx["blocked"])
+        finally:
+            assert self.server._live is not None
+            self.server._live.close()
+            self.server._live = None
+
+    def test_dtc_pdx_generator(self) -> None:
+        from examples.mksomersaultdtcpdx import build_database
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pdx = Path(tmp) / "somersault_dtc.pdx"
+            odxtools.write_pdx_file(str(pdx), build_database())
+            db = odxtools.load_pdx_file(pdx)
+        # the DTC services are defined by the base variant and inherited
+        for ecu in ("somersault_lazy", "somersault_assiduous"):
+            names = {s.short_name for s in db.ecus[ecu].services}
+            self.assertTrue({"read_dtc_by_status_mask", "read_dtc_snapshot", "clear_dtcs"} <= names)
+        dl = db.ecus.somersault_lazy
+        req = dl.services.read_dtc_by_status_mask.encode_request()
+        self.assertEqual(req.hex(), "1902ff")
+        self.assertEqual(dl.services.clear_dtcs.encode_request().hex(), "14ffffff")
+        self.assertEqual(
+            dl.services.read_dtc_snapshot.encode_request(dtc=0x010003).hex(), "190401000301")
+        msg = dl.decode_response(bytes.fromhex("5902ff01000209"), req)[0]
+        records: Any = msg.param_dict["dtcs"]
+        dtc = records[0]["dtc"]
+        self.assertIsInstance(dtc, DiagnosticTroubleCode)
+        self.assertEqual(dtc.trouble_code, 0x010002)
+        self.assertEqual(dtc.text.text, "Flip aborted – too dizzy")
+        self.assertEqual(records[0]["status"]["test_failed"], 1)
+        self.assertEqual(records[0]["status"]["confirmed_dtc"], 1)
+
+        # the bundled somersault database stays without fault memory
+        plain = {
+            s.short_name
+            for s in self.server.get_db("somersault.pdx").ecus.somersault_lazy.services
+        }
+        self.assertNotIn("read_dtc_by_status_mask", plain)
+
+    def test_fault_memory(self) -> None:
+        self.assertIn("somersault_dtc.pdx",
+                      [d["name"] for d in self.client.get("/api/databases").json()])
+        self.client.post(
+            "/api/live/start",
+            json={
+                "db": "somersault_dtc.pdx",
+                "layer": "somersault_lazy",
+                "chart": "angry_chart"
+            })
+
+        def send(**body: Any) -> Any:
+            r = self.client.post("/api/live/send", json=body)
+            self.assertEqual(r.status_code, 200)
+            return r.json()
+
+        try:
+            tx = send(raw="19 02 ff")
+            self.assertEqual(tx["service"], "read_dtc_by_status_mask")
+            self.assertEqual(tx["response"]["kind"], "positive")
+            self.assertEqual(tx["response"]["params"]["dtcs"], [])
+
+            send(service="session_start", params={"bribe": "1"})
+            for _ in range(3):
+                tx = send(
+                    service="do_forward_flips",
+                    params={
+                        "forward_soberness_check": "0x12",
+                        "num_flips": "5"
+                    })
+            ecu = self.client.get("/api/live/poll?after=0").json()["ecu"]
+            self.assertGreater(ecu["temperature"], ecu["limits"]["temperature"])
+            events = ecu["fault_memory"]["events"]
+            self.assertEqual(events[0]["kind"], "stored")
+            self.assertIn("°C limit", events[0]["trigger"])
+
+            # the fault memory may be read while the ECU is too hot for anything else
+            tx = send(service="read_dtc_by_status_mask", params={"status_mask": "0xff"})
+            self.assertEqual(tx["request"]["hex"], "1902ff")
+            self.assertEqual(tx["response"]["kind"], "positive")
+            records = tx["response"]["params"]["dtcs"]
+            codes = {r["dtc"]["trouble_code"]: r for r in records}
+            self.assertIn(0x010001, codes)
+            overheat = codes[0x010001]
+            self.assertEqual(overheat["dtc"]["text"], "Acrobat overheated")
+            self.assertEqual(overheat["status"]["test_failed"], 1)
+            self.assertEqual(overheat["status"]["pending_dtc"], 1)
+            spans = [s["param"] for s in tx["response"]["detail_spans"]]
+            self.assertIn("dtcs[0].dtc", spans)
+            self.assertIn("dtcs[0].status", spans)
+
+            # snapshot (freeze frame) of the stored DTC
+            tx = send(
+                service="read_dtc_snapshot",
+                params={
+                    "dtc": overheat["dtc"]["short_name"],
+                    "record_number": "1"
+                })
+            self.assertEqual(tx["request"]["hex"], "190401000101")
+            self.assertEqual(tx["response"]["kind"], "positive")
+            snap = tx["response"]["params"]["snapshot"]
+            self.assertGreater(snap["temperature"], 65)
+            self.assertGreater(snap["total_flips"], 0)
+            self.assertEqual(tx["response"]["params"]["dtc"]["trouble_code"], 0x010001)
+
+            # snapshots of DTCs which are not stored are refused
+            tx = send(raw="19 04 01 00 03 01")
+            self.assertEqual(tx["service"], "read_dtc_snapshot")
+            self.assertEqual(tx["response"]["kind"], "negative")
+            self.assertEqual(tx["response"]["params"]["response_code"], 0x31)
+
+            tx = send(service="clear_dtcs")
+            self.assertEqual(tx["request"]["hex"], "14ffffff")
+            self.assertEqual(tx["response"]["hex"], "54")
+            tx = send(service="read_dtc_by_status_mask")
+            self.assertEqual(tx["response"]["params"]["dtcs"], [])
+
+            # the UDS traffic went over the virtual CAN bus
+            poll = self.client.get("/api/live/poll?after=0").json()
+            self.assertIn("14ffffff", {t for f in poll["frames"] for t in f["telegram"]})
+            self.assertEqual(poll["ecu"]["fault_memory"]["events"][-1]["kind"], "cleared")
+
+            # resetting the ECU empties the fault memory and its timeline
+            send(service="session_start", params={"bribe": "1"})
+            self.client.post("/api/live/reset")
+            ecu = self.client.get("/api/live/poll?after=0").json()["ecu"]
+            self.assertEqual(ecu["fault_memory"]["events"], [])
         finally:
             assert self.server._live is not None
             self.server._live.close()
