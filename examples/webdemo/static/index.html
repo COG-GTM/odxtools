@@ -109,7 +109,7 @@
       <div class="sa-title">
         <div>
           <h2 class="sa-h">Security Access</h2>
-          <p class="sa-lede">A protected ECU service stays locked until the tester requests a seed and answers with the matching key &mdash; real UDS <span class="mono">0x27</span> telegrams over the virtual CAN bus, gated by an ODX state chart.</p>
+          <p class="sa-lede">A protected service stays locked until the tester answers the ECU&rsquo;s seed with the matching key &mdash; real UDS <span class="mono">0x27</span>, gated by an ODX state chart.</p>
         </div>
         <div id="saConn" class="sa-conn"></div>
       </div>
@@ -129,7 +129,7 @@
     <div id="saEmpty" class="card sa-empty" hidden>
       <div class="sa-illu" aria-hidden="true"><i></i><span></span><i></i></div>
       <h2>No SecurityAccess in this database</h2>
-      <p class="muted">The selected PDX defines no <code>SECURITY</code> state chart. The demo extension adds one on top of the bundled somersault ECU.</p>
+      <p class="muted">The selected PDX defines no ECU variant with a <code>SECURITY</code> state chart and the <code>security_request_seed</code> / <code>security_send_key</code> services. The demo extension adds one on top of the bundled somersault ECU.</p>
       <button id="saOpenDemo" class="btn">Open somersault_security.pdx</button>
     </div>
     <div id="saBody">

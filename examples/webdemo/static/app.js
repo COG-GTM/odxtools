@@ -435,7 +435,8 @@ const hx = b => b.toString(16).toUpperCase().padStart(2, "0");
 const SA = {seed: null, seedUsed: false, steps: null, key: null, wrong: false, keyState: null, unlocking: false, busy: false, prot: null, protLast: null, st: null};
 
 function saTarget() {
-  const c = (S.summary?.layers || []).filter(l => l.variant_type === "ECU-VARIANT" && l.state_charts.some(x => x.semantic === "SECURITY"));
+  const c = (S.summary?.layers || []).filter(l => l.variant_type === "ECU-VARIANT" && l.state_charts.some(x => x.semantic === "SECURITY") &&
+    ["security_request_seed", "security_send_key"].every(n => l.services.some(s => s.name === n)));
   const l = c.find(x => x.name === "somersault_assiduous") || c[0];
   return l ? {layer: l.name, chart: l.state_charts.find(x => x.semantic === "SECURITY").name, summary: l} : null;
 }

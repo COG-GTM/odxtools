@@ -141,7 +141,7 @@ svg text{font-family:var(--sans)}
 .sa-ribbon b{font-family:var(--mono);font-weight:600;color:var(--text)}
 .sa-title{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}
 .sa-h{font:400 34px/1.1 var(--serif);margin:0 0 8px}
-.sa-lede{margin:0;color:var(--text2);font-size:15px;max-width:820px}
+.sa-lede{margin:0;color:var(--text2);font-size:15px}
 .sa-conn{text-align:right;font-size:12px;line-height:1.9;white-space:nowrap}
 .sa-controls{margin:20px 0 0!important}
 .sa-sep{width:1px;height:28px;background:var(--line)}
@@ -200,7 +200,7 @@ svg text{font-family:var(--sans)}
 .sa-cell{font:500 15px var(--mono);min-width:46px;flex:1;text-align:center;padding:8px 2px 6px;border:1px dashed #bbb;color:#bbb;background:#fff}
 .sa-cell small{display:block;font:9.5px var(--mono);margin-top:2px;white-space:nowrap;opacity:.85}
 .sa-cell.on{border:1px solid transparent;color:#fff;animation:cellin .22s ease both;animation-delay:calc(var(--d) + var(--i) * 70ms)}
-.sa-cell.seed,.sa-cell.key{background:#5c7f99}.sa-cell.xor{background:#6e6e6e}.sa-cell.wrong{background:#fff;border-color:var(--bad);color:var(--bad)}
+.sa-cell.seed{background:#3a3a3a}.sa-cell.key{background:#000}.sa-cell.xor{background:#6e6e6e}.sa-cell.wrong{background:#fff;border-color:var(--bad);color:var(--bad)}
 @keyframes cellin{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 .sa-steps{display:flex;flex-direction:column;gap:6px}
 .sa-steprow{display:grid;grid-template-columns:58px 1fr;align-items:center;gap:6px}
@@ -211,7 +211,7 @@ svg text{font-family:var(--sans)}
 .sa-link.on:before{background:#000}.sa-link.on:after{border-left-color:#000}
 .sa-log{display:flex;flex-direction:column;gap:10px;max-height:640px;overflow:auto}
 .sa-x{border:1px solid var(--line);border-left:3px solid var(--line);padding:12px 16px;background:#fff;animation:slidein .22s ease both}
-.sa-x.pos{border-left-color:var(--ok)}.sa-x.neg{border-left-color:var(--bad)}.sa-x.blocked{border-left-color:var(--warn)}
+.sa-x.pos{border-left-color:var(--ok)}.sa-x.neg{border-left-color:var(--bad)}.sa-x.blocked{border-left-color:#000}
 @keyframes slidein{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 .sa-xhd{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .sa-xhd>b{color:var(--text);font-size:14px}
@@ -224,17 +224,17 @@ svg text{font-family:var(--sans)}
 .sa-nrchd{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;color:var(--bad)}
 .sa-nrchd .code{font:600 15px var(--mono)}
 .sa-nrchd b{font-weight:600}
-.sa-blocked{border:1px solid var(--warn);color:var(--warn);background:#fff;padding:10px 12px;margin-top:10px;font-size:13px}
+.sa-blocked{border:1px solid #000;color:#000;background:#fff;padding:10px 12px;margin-top:10px;font-size:13px}
 .sa-blocked code{color:var(--text)}
 .sa-emptylog,.sa-empty{text-align:center;padding:36px 12px;display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--text)}
 .sa-illu{display:flex;align-items:center;width:200px;margin-bottom:12px}
 .sa-illu i{width:12px;height:12px;border:1px solid #9a9a9a;flex:none}
 .sa-illu span{flex:1;border-top:1px dashed #9a9a9a}
 .sa-gate{display:flex;align-items:baseline;gap:12px;border:1px solid;padding:14px 16px;animation:xfade .25s ease}
-.sa-gate.blocked{border-color:var(--warn);color:var(--warn)}.sa-gate.allowed{border-color:var(--ok);color:var(--ok)}
+.sa-gate.blocked{border-color:#000;color:#000}.sa-gate.allowed{border-color:var(--ok);color:var(--ok)}
 .sa-gateword{font:400 26px/1 var(--serif)}
 .sa-gatefacts{margin:10px 0 0!important;color:var(--text2)}
-.sa-gatefacts .ok{color:var(--ok)}.sa-gatefacts .bad{color:var(--bad)}.sa-gatefacts .warn{color:var(--warn)}
+.sa-gatefacts .ok{color:var(--ok)}.sa-gatefacts .bad{color:var(--bad)}.sa-gatefacts .warn{color:#000}
 #saChart svg{max-height:260px}
 .sa-flow{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line)}
 .sa-flow li{padding:12px 14px;border-right:1px solid var(--line);position:relative;transition:background .25s ease,color .25s ease;color:var(--muted)}
