@@ -248,3 +248,4 @@ svg text{font-family:var(--sans)}
 .sec .pbox.ok{border-color:#000}.sec .pbox.ok .pnote{color:var(--text)}
 .padlock[data-phase="unlocked"] .body,.padlock[data-phase="unlocked"] .shackle path,.padlock[data-phase="unlocked"] .keyhole *{stroke:#000}
 .lockstate>[data-v="unlocked"]{color:var(--text)}
+.sec .prot .pill.bad{border-color:#9a9a9a;border-style:dashed;color:var(--text2)}
