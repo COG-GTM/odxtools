@@ -176,6 +176,85 @@ class TestWebDemo(unittest.TestCase):
             self.server._live.close()
             self.server._live = None
 
+    def test_security_access(self) -> None:
+        from virtual_ecu import demo_security_key
+
+        self.client.post(
+            "/api/live/start",
+            json={
+                "db": "somersault_security.pdx",
+                "layer": "somersault_assiduous",
+                "chart": "security_chart"
+            })
+
+        def send(service: str, **params: Any) -> Any:
+            r = self.client.post("/api/live/send", json={"service": service, "params": params})
+            self.assertEqual(r.status_code, 200)
+            return r.json()
+
+        def request_seed() -> int:
+            tx = send("security_request_seed")
+            self.assertEqual(tx["request"]["hex"], "2701")
+            self.assertEqual(tx["response"]["coding_object"], "security_seed")
+            return int(tx["response"]["params"]["seed"])
+
+        try:
+            assert self.server._live is not None
+            behavior = self.server._live.behavior
+
+            # the ODX precondition blocks the protected service while locked
+            tx = send("headstand", duration="3")
+            self.assertTrue(tx["blocked"])
+            self.assertEqual(tx["state_after"], "locked")
+            gates = self.client.get("/api/live/poll").json()["gates"]
+            self.assertFalse(gates["headstand"])
+
+            # a wrong key is refused and does not advance the chart
+            seed = request_seed()
+            tx = send("security_send_key", key=str(demo_security_key(seed) ^ 1))
+            self.assertEqual(tx["response"]["coding_object"], "InvalidKey")
+            self.assertEqual(tx["response"]["hex"], "7f2735")
+            self.assertEqual(tx["state_before"], "locked")
+            self.assertEqual(tx["state_after"], "locked")
+            self.assertEqual(behavior.snapshot()["security"]["attempts"], 1)
+
+            # three wrong keys lead to the lockout delay
+            send("security_send_key", key=str(demo_security_key(seed) ^ 2))
+            tx = send("security_send_key", key=str(demo_security_key(seed) ^ 3))
+            self.assertEqual(tx["response"]["coding_object"], "ExceededNumberOfAttempts")
+            self.assertGreater(behavior.snapshot()["security"]["delay_remaining"], 0)
+            tx = send("security_request_seed")
+            self.assertEqual(tx["response"]["coding_object"], "RequiredTimeDelayNotExpired")
+            self.assertEqual(tx["response"]["hex"], "7f2737")
+            tx = send("security_send_key", key=str(demo_security_key(seed)))
+            self.assertEqual(tx["response"]["coding_object"], "RequiredTimeDelayNotExpired")
+            self.assertEqual(tx["state_after"], "locked")
+
+            # once the modeled delay (on the tick() clock) expired, the
+            # correct key unlocks and the protected service runs
+            behavior._t -= behavior.SECURITY_DELAY_S + 1
+            seed = request_seed()
+            self.assertNotEqual(seed, 0)
+            tx = send("security_send_key", key=hex(demo_security_key(seed)))
+            self.assertEqual(tx["response"]["coding_object"], "security_key_accepted")
+            self.assertEqual(tx["state_before"], "locked")
+            self.assertEqual(tx["state_after"], "unlocked")
+            self.assertFalse(behavior.snapshot()["security"]["locked"])
+            self.assertEqual(request_seed(), 0)
+            tx = send("headstand", duration="3")
+            self.assertFalse(tx["blocked"])
+            self.assertEqual(tx["response"]["coding_object"], "headstand_done")
+
+            # ending the session locks the ECU again
+            tx = send("session_stop")
+            self.assertEqual(tx["state_after"], "locked")
+            self.assertTrue(behavior.snapshot()["security"]["locked"])
+            self.assertTrue(send("headstand", duration="3")["blocked"])
+        finally:
+            assert self.server._live is not None
+            self.server._live.close()
+            self.server._live = None
+
 
 if __name__ == "__main__":
     unittest.main()
