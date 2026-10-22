@@ -260,3 +260,8 @@ svg text{font-family:var(--sans)}
 .timeline{padding-bottom:0}
 .tl-mark.seen,.tl-clear.seen{animation:none}
 .tl-idle{height:60px;line-height:60px;text-align:center;color:var(--muted);font-size:12px;border-top:1px solid var(--line2);border-bottom:1px solid var(--line2)}
+/* fault memory stays black / white / grey; blue marks interaction, red only negative responses */
+.fm .tag.real,.ribbon .tag.real{border-color:var(--text);color:var(--text)}
+.fmnow .hot{color:#fff;background:var(--text);font:600 10px/1 var(--sans);letter-spacing:1px;padding:2px 5px}
+.fmx.pos{border-left-color:var(--text)}
+.gauge .over{font:600 10px/1 var(--sans);letter-spacing:.5px;text-transform:uppercase;color:var(--text);border:1px solid var(--text);padding:2px 4px;margin-left:6px}

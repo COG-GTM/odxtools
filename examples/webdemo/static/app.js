@@ -19,6 +19,7 @@ const S = {db: null, summary: null, layer: null, service: null, detail: null, po
 $$("#tabs button").forEach(b => b.onclick = () => {
   $$("#tabs button").forEach(x => x.classList.toggle("active", x === b));
   $$(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + b.dataset.tab));
+  if (b.dataset.tab === "faults" && fmSupported() && !fmSessionOk()) connectLive();
 });
 
 // ---------------------------------------------------------------- databases
@@ -460,6 +461,8 @@ const dtcHex = c => "0x" + Number(c).toString(16).toUpperCase().padStart(6, "0")
 const byteHex = n => "0x" + Number(n).toString(16).toUpperCase().padStart(2, "0");
 const fmHas = n => !!liveLayerSummary()?.services.some(s => s.name === n);
 const fmSupported = () => FM_SERVICES.every(fmHas);
+// the live session must belong to the selected database and ECU variant
+const fmSessionOk = () => !!S.live && S.live.db === S.db && S.live.layer === $("#liveLayer").value;
 const fmProg = h => { $("#fmProgress").innerHTML = h; };
 
 function fmSyncDb() {
@@ -485,7 +488,7 @@ function fmReset() {
 function fmOnPoll(ecu) {
   FM.ecu = ecu; if (!ecu || !$("#fmBody") || $("#fmBody").hidden) return;
   const L = ecu.limits, hot = ecu.temperature > L.temperature;
-  $("#fmNow").innerHTML = `ECU now <span class="tag model">MODELED</span> <b class="${hot ? "hot" : ""}">${ecu.temperature.toFixed(1)} °C</b> / ${L.temperature} °C · dizziness <b>${ecu.dizziness.toFixed(0)}</b> / ${L.dizziness} · ${ecu.session_active ? "session active" : "no session"}`;
+  $("#fmNow").innerHTML = `ECU now <span class="tag model">MODELED</span> <b>${ecu.temperature.toFixed(1)} °C</b> / ${L.temperature} °C${hot ? ` <span class="hot">HOT</span>` : ""} · dizziness <b>${ecu.dizziness.toFixed(0)}</b> / ${L.dizziness} · ${ecu.session_active ? "session active" : "no session"}`;
   fmTimeline(ecu);
   const occ = ecu.fault_memory?.occurrences || {};
   for (const [code, el] of FM.cards) { const o = $(".occ", el), v = occ[code] ?? "–"; if (o.textContent !== String(v)) o.textContent = v; }
@@ -598,8 +601,8 @@ async function fmClear() {
 }
 function fmCloseDrawer() { FM.open = null; $("#fmDrawer").classList.remove("open"); FM.cards.forEach(c => c.classList.remove("active")); }
 function fmGauge(label, v, max, lim, unit) {
-  const col = v >= lim ? "#d92121" : v > lim * .85 ? "#e09400" : "#000";
-  return `<div class="gauge"><div class="lab"><span>${esc(label)}</span><span class="mono">${esc(v)}${esc(unit)}</span></div><div class="bar"><div class="fill" style="width:${Math.min(100, v / max * 100)}%;background:${col}"></div><div class="lim" style="left:${lim / max * 100}%" title="limit ${esc(lim)}${esc(unit)}"></div></div></div>`;
+  const over = v > lim;
+  return `<div class="gauge"><div class="lab"><span>${esc(label)}</span><span class="mono">${esc(v)}${esc(unit)}${over ? ` <span class="over">over ${esc(lim)}${esc(unit)} limit</span>` : ""}</span></div><div class="bar"><div class="fill" style="width:${Math.min(100, v / max * 100)}%;background:#000"></div><div class="lim" style="left:${lim / max * 100}%" title="limit ${esc(lim)}${esc(unit)}"></div></div></div>`;
 }
 async function fmSnapshot(code) {
   const el = FM.cards.get(code); if (!el) return;
@@ -678,7 +681,7 @@ document.addEventListener("click", e => { if (!e.target.closest(".menu")) fmMenu
 document.addEventListener("keydown", e => { if (e.key === "Escape") fmMenuOpen(false); });
 async function fmLocked(fn) {
   if (FM.busy) return; FM.busy = true; ["#fmRead", "#fmClear", "#fmProvoke"].forEach(id => $(id).disabled = true);
-  try { if (!S.live) await connectLive(); await fn(); }
+  try { if (!fmSessionOk()) await connectLive(); await fn(); }
   finally { FM.busy = false; ["#fmRead", "#fmClear", "#fmProvoke"].forEach(id => $(id).disabled = !fmSupported()); }
 }
 function fmRun(r) {
