@@ -28,9 +28,11 @@
   <button data-tab="overview" class="active">Overview</button>
   <button data-tab="services">Service Inspector</button>
   <button data-tab="live">Live Virtual ECU</button>
+  <button data-tab="faults">Fault Memory</button>
   <button data-tab="decode">Decoder</button>
   <button data-tab="compare">Compare</button>
 </nav>
+<div id="demoRibbon" class="ribbon" hidden><span class="tag ext">DEMO PDX EXTENSION</span> The DTC-DOP and the ReadDTCInformation (0x19) / ClearDiagnosticInformation (0x14) services of <code>somersault_dtc.pdx</code> were added by <code>examples/mksomersaultdtcpdx.py</code>. They are not part of the original somersault ECU.</div>
 <main>
   <section id="tab-overview" class="tab active">
     <div id="stats" class="stats"></div>
@@ -97,6 +99,46 @@
     <div class="card">
       <h2>CAN bus trace <span id="frameRate" class="muted small"></span></h2>
       <div class="tracewrap"><table id="trace"><thead><tr><th>#</th><th>t [ms]</th><th>CAN ID</th><th>Node</th><th>ISO-TP</th><th>Data</th><th>Reassembled telegram</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="tab-faults" class="tab fm">
+    <div class="card fmhead">
+      <div class="fmtitle">
+        <h2 class="fm-h">Fault memory</h2>
+        <p>Modeled faults make the virtual ECU store diagnostic trouble codes with a freeze frame; the tester reads, inspects and clears them with UDS over the virtual CAN bus.</p>
+      </div>
+      <div class="row fmcontrols">
+        <label for="fmLayer">ECU variant</label><select id="fmLayer"></select>
+        <button id="fmRead" class="btn">Read DTCs</button>
+        <button id="fmClear" class="btn ghost">Clear DTCs</button>
+        <div class="menu">
+          <button id="fmProvoke" class="btn accent" aria-haspopup="true" aria-expanded="false">Provoke fault <span class="caret">&#9662;</span></button>
+          <div id="fmMenu" class="menu-list" role="menu" hidden></div>
+        </div>
+        <span id="fmNow" class="fmnow"></span>
+      </div>
+      <div id="fmProgress" class="fmprogress"></div>
+      <div class="honesty"><span class="tag real">REAL</span> DTC decoding by odxtools from the ODX <code>DTC-DOP</code> · UDS 0x19 / 0x14 over can-isotp on a python-can virtual bus · odxtools <code>StateMachine</code> pre-conditions
+        &nbsp;&nbsp;<span class="tag model">MODELED</span> fault triggers (acrobat physics) · status-bit debouncing and occurrence counter of the demo ECU</div>
+    </div>
+    <div id="fmUnsupported" class="card fmempty" hidden></div>
+    <div id="fmBody">
+      <div class="card">
+        <h2>Session timeline <span class="muted small">every stored or updated DTC drops a marker; hover for the trigger</span></h2>
+        <div id="fmTimeline" class="timeline"></div>
+      </div>
+      <div class="fmgrid">
+        <div class="card">
+          <h2>Stored DTCs <span id="fmCount" class="muted small"></span></h2>
+          <div id="fmCards" class="dtccards"></div>
+          <div id="fmDrawer" class="drawer" aria-live="polite"></div>
+        </div>
+        <div class="card">
+          <h2>UDS exchanges <span class="muted small">request above, response below · bytes coloured by ODX parameter</span></h2>
+          <div id="fmExchanges" class="exchanges"><div class="muted fmhint">Read, snapshot and clear requests appear here, and in the Live Virtual ECU CAN trace.</div></div>
+        </div>
+      </div>
     </div>
   </section>
 

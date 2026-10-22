@@ -40,7 +40,10 @@ from odxtools.database import Database  # noqa: E402
 from odxtools.dataobjectproperty import DataObjectProperty  # noqa: E402
 from odxtools.diaglayers.diaglayer import DiagLayer  # noqa: E402
 from odxtools.diaglayers.hierarchyelement import HierarchyElement  # noqa: E402
+from odxtools.diagnostictroublecode import DiagnosticTroubleCode  # noqa: E402
 from odxtools.diagservice import DiagService  # noqa: E402
+from odxtools.dtcdop import DtcDop  # noqa: E402
+from odxtools.endofpdufield import EndOfPduField  # noqa: E402
 from odxtools.isotp_state_machine import IsoTpStateMachine  # noqa: E402
 from odxtools.message import Message  # noqa: E402
 from odxtools.parameters.codedconstparameter import CodedConstParameter  # noqa: E402
@@ -49,6 +52,7 @@ from odxtools.odxtypes import DataType  # noqa: E402
 from odxtools.parameters.parameter import Parameter  # noqa: E402
 from odxtools.response import Response, ResponseType  # noqa: E402
 from odxtools.statemachine import StateMachine  # noqa: E402
+from odxtools.structure import Structure  # noqa: E402
 from virtual_ecu import CanNetwork, SomersaultBehavior  # noqa: E402
 
 warnings.simplefilter("ignore")
@@ -112,6 +116,15 @@ def _plain(x: Any) -> Any:
         return str(x)
     if isinstance(x, str):
         return _RICH.sub("", x)
+    if isinstance(x, DiagnosticTroubleCode):
+        # a trouble code decoded via a DTC-DOP of the ODX database
+        return {
+            "trouble_code": x.trouble_code,
+            "short_name": x.short_name,
+            "display_trouble_code": x.display_trouble_code,
+            "text": x.text.text if x.text is not None else None,
+            "level": x.level,
+        }
     if x is None or isinstance(x, (int, float, bool)):
         return x
     return str(x)
@@ -369,6 +382,12 @@ def _coerce(p: Parameter, value: Any) -> Any:
     if isinstance(dop, DataObjectProperty):
         ptype = dop.physical_type.base_data_type
     sval = str(value).strip()
+    if isinstance(dop, DtcDop):
+        # DTCs may be specified by their trouble code or their short name
+        try:
+            return int(sval, 0)
+        except ValueError:
+            return sval
     if ptype in (DataType.A_INT32, DataType.A_UINT32):
         return int(sval, 0)
     if ptype in (DataType.A_FLOAT32, DataType.A_FLOAT64):
@@ -401,6 +420,77 @@ def byte_spans(obj: Any, pdu: bytes) -> list[dict[str, Any]]:
     return spans
 
 
+def _param_bits(p: Any) -> int | None:
+    bl = p.get_static_bit_length()
+    dop = getattr(p, "dop", None)
+    if bl is None and isinstance(dop, DtcDop):
+        bl = dop.diag_coded_type.get_static_bit_length()
+    return cast(int | None, bl)
+
+
+def _structure_bits(struct: Any) -> int | None:
+    bl = struct.get_static_bit_length()
+    if bl is not None:
+        return cast(int, bl)
+    end = 0
+    for p in struct.parameters:
+        pbl = _param_bits(p)
+        if p.byte_position is None or pbl is None:
+            return None
+        end = max(end, 8 * p.byte_position + (p.bit_position or 0) + pbl)
+    return end
+
+
+def _structure_spans(struct: Any, start: int, end: int, prefix: str) -> list[dict[str, Any]] | None:
+    """Byte ranges of the byte-aligned members of a structure, or None
+    if the structure packs several members into a byte."""
+    spans: list[dict[str, Any]] = []
+    for p in struct.parameters:
+        bl = _param_bits(p)
+        if p.byte_position is None or bl is None or bl % 8 or p.bit_position:
+            return None
+        pos = start + p.byte_position
+        if pos >= end:
+            break
+        sub = getattr(p, "dop", None)
+        nested = None
+        if isinstance(sub, Structure):
+            nested = _structure_spans(sub, pos, min(end, pos + bl // 8), f"{prefix}{p.short_name}.")
+        if nested:
+            spans += nested
+        else:
+            spans.append({
+                "param": f"{prefix}{p.short_name}",
+                "group": p.short_name,
+                "start": pos,
+                "length": min(bl // 8, end - pos)
+            })
+    return spans
+
+
+def detail_spans(obj: Any, pdu: bytes) -> list[dict[str, Any]]:
+    """Like `byte_spans()`, but structures and repeated fields are broken
+    down into their members, e.g. `dtcs[1].status`."""
+    out: list[dict[str, Any]] = []
+    for span in byte_spans(obj, pdu):
+        p = next(q for q in obj.parameters if q.short_name == span["param"])
+        start, end = span["start"], span["start"] + span["length"]
+        dop = getattr(p, "dop", None)
+        sub: list[dict[str, Any]] | None = None
+        if isinstance(dop, Structure):
+            sub = _structure_spans(dop, start, end, f"{p.short_name}.")
+        elif isinstance(dop, EndOfPduField):
+            bl = _structure_bits(dop.structure)
+            if bl and bl % 8 == 0:
+                size = bl // 8
+                sub = []
+                for i, item_start in enumerate(range(start, end, size)):
+                    sub += _structure_spans(dop.structure, item_start, min(end, item_start + size),
+                                            f"{p.short_name}[{i}].") or []
+        out += sub or [{**span, "group": span["param"]}]
+    return out
+
+
 def describe_message(msg: Any) -> dict[str, Any]:
     obj = msg.coding_object
     kind = "request"
@@ -411,13 +501,22 @@ def describe_message(msg: Any) -> dict[str, Any]:
             ResponseType.GLOBAL_NEGATIVE: "global_negative",
         }.get(obj.response_type, "response")
     pdu = bytes(msg.coded_message)
+    nrc = None
+    code = msg.param_dict.get("response_code") if isinstance(msg.param_dict, dict) else None
+    if kind == "negative" and isinstance(code, int):
+        try:
+            nrc = {"code": code, "name": uds.NegativeResponseCodes(code).name}
+        except ValueError:
+            nrc = {"code": code, "name": None}
     return {
+        "nrc": nrc,
         "service": msg.service.short_name if msg.service is not None else None,
         "coding_object": obj.short_name,
         "kind": kind,
         "hex": pdu.hex(),
         "params": _plain(msg.param_dict),
         "spans": byte_spans(obj, pdu),
+        "detail_spans": detail_spans(obj, pdu),
     }
 
 
@@ -432,6 +531,10 @@ def describe_raw_uds(pdu: bytes) -> dict[str, Any]:
             nrc = f"0x{pdu[2]:02x}"
         out.update(
             kind="negative",
+            nrc={
+                "code": pdu[2],
+                "name": None if nrc.startswith("0x") else nrc
+            },
             coding_object="UDS negative response (not in ODX)",
             params={
                 "rq_sid": f"0x{pdu[1]:02x} ({uds.sid_to_name(pdu[1]) or '?'})",
