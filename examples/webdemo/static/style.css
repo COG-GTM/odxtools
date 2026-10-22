@@ -265,3 +265,7 @@ svg text{font-family:var(--sans)}
 .fmnow .hot{color:#fff;background:var(--text);font:600 10px/1 var(--sans);letter-spacing:1px;padding:2px 5px}
 .fmx.pos{border-left-color:var(--text)}
 .gauge .over{font:600 10px/1 var(--sans);letter-spacing:.5px;text-transform:uppercase;color:var(--text);border:1px solid var(--text);padding:2px 4px;margin-left:6px}
+.dtc{container-type:inline-size;min-width:0}
+.chips{grid-template-columns:repeat(8,minmax(0,1fr))}
+.bit{overflow:hidden;white-space:nowrap;letter-spacing:0}
+@container (max-width:330px){.chips{grid-template-columns:repeat(4,minmax(0,1fr))}}
