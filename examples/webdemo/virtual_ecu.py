@@ -6,6 +6,7 @@ All telegrams are decoded and encoded by odxtools using the ODX
 database; only the *behavior* (dizziness, temperature, ...) is
 modeled here.
 """
+import secrets
 import threading
 import time
 from collections.abc import Callable
@@ -24,6 +25,20 @@ def _nrc(sid: int, code: uds.NegativeResponseCodes) -> bytes:
     return bytes([uds.NegativeResponseId, sid, int(code)])
 
 
+DEMO_KEY_MASK = 0x5A5A5A5A
+DEMO_KEY_ROTATION = 3
+
+
+def demo_security_key(seed: int) -> int:
+    """The *demo* seed/key algorithm of the virtual ECU.
+
+    ``key = rotl32(seed ^ 0x5A5A5A5A, 3)``. This is not, and does not
+    resemble, any real OEM algorithm.
+    """
+    x = (seed ^ DEMO_KEY_MASK) & 0xFFFFFFFF
+    return ((x << DEMO_KEY_ROTATION) | (x >> (32 - DEMO_KEY_ROTATION))) & 0xFFFFFFFF
+
+
 class SomersaultBehavior:
     """Physical state of the acrobat behind the somersault ECU."""
 
@@ -31,6 +46,8 @@ class SomersaultBehavior:
     DIZZY_LIMIT = 180
     HOT_LIMIT = 65
     MAX_FLIPS_PER_REQUEST = 10
+    SECURITY_MAX_ATTEMPTS = 3
+    SECURITY_DELAY_S = 10.0
 
     def __init__(self, variant: DiagLayer) -> None:
         self.variant = variant
@@ -44,6 +61,10 @@ class SomersaultBehavior:
         self.fire_ring = False
         self.total_flips = 0
         self.last_flip: tuple[str, dict[str, Any]] = ("none", {})
+        self.security_unlocked = False
+        self.security_seed: int | None = None
+        self.security_attempts = 0
+        self.security_delay = 0.0
         self._t = time.monotonic()
 
     def tick(self) -> None:
@@ -52,10 +73,18 @@ class SomersaultBehavior:
         self._t = now
         self.dizziness = max(0.0, self.dizziness - 3.0 * dt)
         self.temperature = max(36.0, self.temperature - 0.5 * dt)
+        if self.security_delay > 0:
+            self.security_delay = max(0.0, self.security_delay - dt)
+            if self.security_delay == 0:
+                self.security_attempts = 0
 
     @property
     def can_do_backward_flips(self) -> bool:
         return "do_backward_flips" in {s.short_name for s in self.variant.services}
+
+    @property
+    def supports_security_access(self) -> bool:
+        return "security_send_key" in {s.short_name for s in self.variant.services}
 
     def snapshot(self) -> dict[str, Any]:
         self.tick()
@@ -69,6 +98,15 @@ class SomersaultBehavior:
             "limits": {
                 "dizziness": self.DIZZY_LIMIT,
                 "temperature": self.HOT_LIMIT,
+            },
+            "security": {
+                "supported": self.supports_security_access,
+                "locked": not self.security_unlocked,
+                "seed_pending": self.security_seed is not None,
+                "attempts": self.security_attempts,
+                "max_attempts": self.SECURITY_MAX_ATTEMPTS,
+                "delay_remaining": round(self.security_delay, 2),
+                "delay_total": self.SECURITY_DELAY_S,
             },
         }
 
@@ -130,6 +168,8 @@ class SomersaultBehavior:
 
     def _on_session_stop(self, service: Any, raw_req: bytes, params: dict[str, Any]) -> bytes:
         self.session_active = False
+        self.security_unlocked = False
+        self.security_seed = None
         return self._pos(
             service,
             raw_req,
@@ -216,6 +256,41 @@ class SomersaultBehavior:
             resp = service.negative_responses.fell_over
             return bytes(resp.encode(raw_req))
         self.dizziness += duration / 2
+        return self._pos(service, raw_req)
+
+    def _security_nrc(self, service: Any, raw_req: bytes, code: uds.NegativeResponseCodes) -> bytes:
+        resp: Response = getattr(service.negative_responses, f"nrc_{code.name}")
+        return bytes(resp.encode(raw_req))
+
+    def _on_security_request_seed(self, service: Any, raw_req: bytes, params: dict[str,
+                                                                                   Any]) -> bytes:
+        if self.security_delay > 0:
+            return self._security_nrc(service, raw_req,
+                                      uds.NegativeResponseCodes.RequiredTimeDelayNotExpired)
+        if self.security_unlocked:
+            # ISO 14229-1: an unlocked ECU answers with an all-zero seed
+            self.security_seed = None
+            return self._pos(service, raw_req, security_seed=0)
+        self.security_seed = secrets.randbits(32) or 1
+        return self._pos(service, raw_req, security_seed=self.security_seed)
+
+    def _on_security_send_key(self, service: Any, raw_req: bytes, params: dict[str, Any]) -> bytes:
+        if self.security_delay > 0:
+            return self._security_nrc(service, raw_req,
+                                      uds.NegativeResponseCodes.RequiredTimeDelayNotExpired)
+        if self.security_seed is None:
+            return self._security_nrc(service, raw_req,
+                                      uds.NegativeResponseCodes.RequestSequenceError)
+        seed, self.security_seed = self.security_seed, None
+        if int(params.get("security_key", -1)) != demo_security_key(seed):
+            self.security_attempts += 1
+            if self.security_attempts >= self.SECURITY_MAX_ATTEMPTS:
+                self.security_delay = self.SECURITY_DELAY_S
+                return self._security_nrc(service, raw_req,
+                                          uds.NegativeResponseCodes.ExceededNumberOfAttempts)
+            return self._security_nrc(service, raw_req, uds.NegativeResponseCodes.InvalidKey)
+        self.security_attempts = 0
+        self.security_unlocked = True
         return self._pos(service, raw_req)
 
 

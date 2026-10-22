@@ -411,7 +411,7 @@ def describe_message(msg: Any) -> dict[str, Any]:
             ResponseType.GLOBAL_NEGATIVE: "global_negative",
         }.get(obj.response_type, "response")
     pdu = bytes(msg.coded_message)
-    return {
+    out = {
         "service": msg.service.short_name if msg.service is not None else None,
         "coding_object": obj.short_name,
         "kind": kind,
@@ -419,6 +419,18 @@ def describe_message(msg: Any) -> dict[str, Any]:
         "params": _plain(msg.param_dict),
         "spans": byte_spans(obj, pdu),
     }
+    is_nrc = len(pdu) >= 3 and pdu[0] == uds.NegativeResponseId
+    if is_nrc and kind in ("negative", "global_negative"):
+        out["nrc"] = _nrc_info(pdu[2])
+    return out
+
+
+def _nrc_info(code: int) -> dict[str, Any]:
+    try:
+        name = uds.NegativeResponseCodes(code).name
+    except ValueError:
+        name = None
+    return {"code": code, "hex": f"0x{code:02X}", "name": name}
 
 
 def describe_raw_uds(pdu: bytes) -> dict[str, Any]:
@@ -437,6 +449,7 @@ def describe_raw_uds(pdu: bytes) -> dict[str, Any]:
                 "rq_sid": f"0x{pdu[1]:02x} ({uds.sid_to_name(pdu[1]) or '?'})",
                 "nrc": nrc
             },
+            nrc=_nrc_info(pdu[2]),
             spans=[{
                 "param": "sid",
                 "start": 0,
@@ -691,10 +704,29 @@ class LiveSession:
                 k: v.active_state.short_name
                 for k, v in self.fsms.items()
             },
+            "preconditions": self.preconditions(),
             "session": self.session_id,
             "frame_count": len(self.frames),
             "seq": max((x[-1]["seq"] for x in (self.frames, self.transactions) if x), default=0),
         }
+
+    def preconditions(self) -> dict[str, list[dict[str, str]]]:
+        """The PRE-CONDITION-STATE-REFs of each service as (chart, state) pairs."""
+        charts = {
+            st.odx_id: sc.short_name
+            for dl in get_db(self.db_name).diag_layers
+            for sc in dl.state_charts
+            for st in sc.states
+        }
+        out: dict[str, list[dict[str, str]]] = {}
+        for s in self.dl.services:
+            refs = [{
+                "chart": charts.get(r.state.odx_id, ""),
+                "state": r.state.short_name,
+            } for r in s.pre_condition_state_refs]
+            if refs:
+                out[s.short_name] = refs
+        return out
 
     def close(self) -> None:
         self.net.shutdown()
