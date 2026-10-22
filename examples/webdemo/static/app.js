@@ -284,7 +284,7 @@ $("#liveReset").onclick = async () => {
   S.gen = (S.gen || 0) + 1;
   let st; try { st = await api(`/api/live/reset?session=${S.live.session}`, {method: "POST"}); } catch { poll(); return; }
   if (!S.live || st.session !== S.live.session) return;
-  S.gen++; S.after = Math.max(S.after, st.seq); S.live.charts = null; S.lastTrans = null; poll();
+  S.gen++; S.after = Math.max(S.after, st.seq); S.live.charts = null; S.lastTrans = null; secClearPipeline(); poll();
 };
 
 async function connectLive() {
@@ -475,7 +475,7 @@ S.sec = {seed: null, key: null, keyWrong: false, computed: false, sent: false, p
 S.gates = {};
 
 function secLayer() { return S.summary?.layers.find(l => l.state_charts.some(c => c.name === "security_chart")) || null; }
-function secConnected() { const l = secLayer(); return !!(l && S.live && S.live.layer === l.name); }
+function secConnected() { const l = secLayer(); return !!(l && S.live && S.live.db === S.db && S.live.layer === l.name); }
 function secChartState() { return secConnected() ? (S.live?.charts?.security_chart || "locked") : null; }
 
 async function secConnect() {
@@ -493,18 +493,24 @@ function secResetView() {
   renderPipeline();
 }
 
+// the ECU drops its seed on session_stop / reset, so the shown seed and key are void
+function secClearPipeline() {
+  S.sec = {seed: null, key: null, keyWrong: false, computed: false, sent: false, pending: false, result: null, v: S.sec.v + 1};
+  renderPipeline();
+}
+
 function secNote(msg, bad) { const n = $("#secNote"); n.textContent = msg || ""; n.classList.toggle("bad", !!bad); }
 
 function nrcOf(resp) {
   const p = resp.params || {};
-  const code = Number(p.response_code ?? p.nrc ?? parseInt(resp.hex.slice(4, 6), 16));
+  const code = Number(p.response_code ?? parseInt(resp.hex.slice(4, 6), 16));
   const info = NRC_INFO[code] || [resp.coding_object || "NegativeResponse", ""];
   const odxName = resp.coding_object && !resp.coding_object.includes("not in ODX") ? resp.coding_object : null;
   return {code, name: odxName || info[0], desc: info[1], odx: !!odxName};
 }
 
 function secAddTx(t) {
-  const layer = secLayer(); if (!layer || !S.live || S.live.layer !== layer.name) return;
+  if (!secConnected()) return;
   const resp = t.response, ok = resp && resp.kind === "positive";
   if (t.service === "security_request_seed" && ok) {
     const seed = Number(resp.params.seed);
@@ -516,7 +522,9 @@ function secAddTx(t) {
     renderPipeline();
   } else if (t.service === "headstand") {
     S.secLastProt = t;
-  } else if (t.service === "session_stop" || (t.service === "security_request_seed" && resp)) {
+  } else if (t.service === "session_stop" && ok) {
+    secClearPipeline();
+  } else if (t.service === "security_request_seed" && resp) {
     S.sec.pending = false;
   }
   const tl = $("#secTimeline"); tl.querySelector(".emptystate")?.remove();
