@@ -176,6 +176,159 @@ class TestWebDemo(unittest.TestCase):
             self.server._live.close()
             self.server._live = None
 
+    def _security_session(self) -> Any:
+        self.client.post(
+            "/api/live/start",
+            json={
+                "db": "somersault_security.pdx",
+                "layer": "somersault_assiduous",
+                "chart": "security_chart"
+            })
+
+        def send(service: str, **params: Any) -> Any:
+            return self.client.post(
+                "/api/live/send", json={
+                    "service": service,
+                    "params": params
+                }).json()
+
+        return send
+
+    def _close_live(self) -> None:
+        assert self.server._live is not None
+        self.server._live.close()
+        self.server._live = None
+
+    def test_security_demo_key(self) -> None:
+        from virtual_ecu import demo_security_key
+        self.assertEqual(demo_security_key(bytes.fromhex("12345678")).hex(), "43706112")
+        self.assertEqual(demo_security_key(bytes(4)).hex(), "d2d2d2d2")
+
+    def test_security_access_lockout(self) -> None:
+        send = self._security_session()
+        try:
+            summary = self.client.get("/api/db/somersault_security.pdx").json()
+            self.assertTrue(summary["demo_extension"])
+            self.assertFalse(self.client.get("/api/db/somersault.pdx").json()["demo_extension"])
+
+            # the protected service is blocked by the ODX pre-condition while locked
+            tx = send("headstand", duration="3")
+            self.assertTrue(tx["blocked"])
+            self.assertEqual(tx["state_before"], "locked")
+            st = self.client.get("/api/live/poll?after=0").json()
+            self.assertEqual(st["gates"]["headstand"], {"allowed": False, "requires": ["unlocked"]})
+
+            # sendKey without a seed
+            tx = send("security_send_key", security_key="00000000")
+            self.assertEqual(tx["response"]["coding_object"], "security_request_sequence_error")
+
+            for attempt in range(1, 4):
+                tx = send("security_request_seed")
+                self.assertEqual(tx["response"]["coding_object"], "security_seed")
+                self.assertEqual(tx["response"]["hex"][:4], "6701")
+                tx = send("security_send_key", security_key="00000000")
+                self.assertEqual(tx["request"]["hex"], "270200000000")
+                # the ECU's negative response rolls back the locked -> unlocked transition
+                self.assertEqual(tx["state_before"], "locked")
+                self.assertEqual(tx["state_after"], "locked")
+                nrc = tx["response"]["hex"]
+                if attempt < 3:
+                    self.assertEqual(nrc, "7f2735")
+                    self.assertEqual(tx["response"]["coding_object"], "security_invalid_key")
+                else:
+                    self.assertEqual(nrc, "7f2736")
+                self.assertEqual(
+                    self.client.get("/api/live/poll?after=0").json()["ecu"]["security"]["attempts"],
+                    attempt)
+
+            # the modeled delay is running: both sub-functions answer 0x37
+            for service, params in (("security_request_seed", {}), ("security_send_key", {
+                    "security_key": "00000000"
+            })):
+                tx = send(service, **params)
+                self.assertEqual(tx["response"]["hex"], "7f2737")
+                self.assertEqual(tx["response"]["coding_object"],
+                                 "security_required_time_delay_not_expired")
+            sec = self.client.get("/api/live/poll?after=0").json()["ecu"]["security"]
+            self.assertTrue(sec["locked"])
+            self.assertGreater(sec["delay_remaining"], 0)
+            self.assertEqual(sec["delay_total"], 10.0)
+
+            # the delay timer runs on the tick() clock, reset() clears it
+            self.client.post("/api/live/reset")
+            sec = self.client.get("/api/live/poll?after=0").json()["ecu"]["security"]
+            self.assertEqual((sec["attempts"], sec["delay_remaining"]), (0, 0))
+        finally:
+            self._close_live()
+
+    def test_security_access_unlock_and_relock(self) -> None:
+        from virtual_ecu import demo_security_key
+        send = self._security_session()
+        try:
+            tx = send("security_request_seed")
+            seed = bytes.fromhex(tx["response"]["params"]["security_seed"][2:])
+            self.assertEqual(len(seed), 4)
+            self.assertEqual([s["param"] for s in tx["response"]["spans"]],
+                             ["sid", "security_access_type", "security_seed"])
+            key = demo_security_key(seed)
+            tx = send("security_send_key", security_key=key.hex())
+            self.assertEqual(tx["request"]["hex"], "2702" + key.hex())
+            self.assertEqual(tx["response"]["hex"], "6702")
+            self.assertEqual((tx["state_before"], tx["state_after"]), ("locked", "unlocked"))
+            st = self.client.get("/api/live/poll?after=0").json()
+            self.assertFalse(st["ecu"]["security"]["locked"])
+            self.assertTrue(st["gates"]["headstand"]["allowed"])
+
+            tx = send("headstand", duration="3")
+            self.assertFalse(tx["blocked"])
+            self.assertEqual(tx["response"]["kind"], "positive")
+
+            # an unlocked ECU answers requestSeed with an all-zero seed
+            tx = send("security_request_seed")
+            self.assertEqual(tx["response"]["hex"], "670100000000")
+
+            # raw 0x27 telegrams are identified and decoded, too
+            tx = self.client.post("/api/live/send", json={"raw": "27 01"}).json()
+            self.assertEqual(tx["service"], "security_request_seed")
+
+            tx = send("session_stop")
+            self.assertEqual((tx["state_before"], tx["state_after"]), ("unlocked", "locked"))
+            self.assertTrue(
+                self.client.get("/api/live/poll?after=0").json()["ecu"]["security"]["locked"])
+            self.assertTrue(send("headstand", duration="3")["blocked"])
+        finally:
+            self._close_live()
+
+    def test_security_pdx_state_machine(self) -> None:
+        import odxtools
+        from odxtools.statemachine import StateMachine
+        db = odxtools.load_pdx_file(str(WEBDEMO.parent / "somersault_security.pdx"))
+        dl = db.ecu_variants.somersault_assiduous
+        chart = dl.state_charts.security_chart
+        self.assertEqual(chart.start_state.short_name, "locked")
+        fsm = StateMachine(dl, chart)
+        with self.assertRaises(StopIteration):
+            next(fsm.execute(dl.services.headstand, duration=3))
+        self.assertFalse(fsm.succeeded)
+        seed_rq = dl.services.security_request_seed.request.encode()
+        self.assertEqual(seed_rq.hex(), "2701")
+        for nrc, name in ((0x35, "invalid_key"), (0x36, "exceeded_number_of_attempts"),
+                          (0x37, "required_time_delay_not_expired")):
+            msgs = dl.decode_response(bytes([0x7f, 0x27, nrc]), seed_rq)
+            self.assertEqual([m.coding_object.short_name for m in msgs], [f"security_{name}"])
+        ex = fsm.execute(dl.services.security_send_key, security_key=bytes(4))
+        self.assertEqual(next(ex).hex(), "270200000000")
+        try:
+            ex.send(bytes.fromhex("6702"))
+        except StopIteration:
+            pass
+        self.assertEqual(fsm.active_state.short_name, "unlocked")
+        self.assertEqual(next(fsm.execute(dl.services.headstand, duration=3)).hex(), "0303")
+        # the bundled PDX is untouched: no security services there
+        orig = odxtools.load_pdx_file(str(WEBDEMO.parent / "somersault.pdx"))
+        self.assertNotIn("security_request_seed",
+                         [s.short_name for s in orig.ecu_variants.somersault_assiduous.services])
+
 
 if __name__ == "__main__":
     unittest.main()
